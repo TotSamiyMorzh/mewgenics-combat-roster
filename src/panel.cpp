@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 
 namespace cr {
 namespace {
@@ -238,7 +239,8 @@ Icon passive_icon(const char* id) { return labelled("PassiveIcon", id); }
 
 // An icon-led entry: a big icon on the left, the name and (optional)
 // description in a column beside it, both vertically centred on the icon.
-void icon_entry(const Icon& ic, const std::string& name, const std::string& desc, float s) {
+void icon_entry(const Icon& ic, const std::string& name, const std::string& desc, float s,
+                const std::function<void()>& after_name = nullptr) {
     float fs = ImGui::GetFontSize(), sz = fs * 2.3f;
     ImVec2 p = ImGui::GetCursorScreenPos();
     float y0 = ImGui::GetCursorPosY();
@@ -253,6 +255,7 @@ void icon_entry(const Icon& ic, const std::string& name, const std::string& desc
     ImGui::SetCursorPosY(y0 + std::fmax(0.0f, (sz - th) * 0.5f));
     ImGui::BeginGroup();
     ImGui::TextUnformatted(name.c_str());
+    if (after_name) after_name();   // e.g. mana cost, on the name's line
     wrapped_dim(desc);
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, 2 * s));
@@ -304,26 +307,52 @@ void wrapped_dim(const std::string& t) {
 }
 
 // A tooltip on the game's paper. Contents go on channel 1, the paper on 0.
+// Unit tooltips can be taller than the screen: they are capped and scroll with
+// the mouse wheel while the pointer stays on the unit's row (the row owns the
+// wheel, so the party list underneath does not scroll at the same time).
+float g_tt_wheel = 0.0f;       // wheel delta to apply to the unit tooltip this frame
+bool  g_tt_reset = false;      // a different unit: start at the top
+
 template <class F>
-void paper_tooltip(float s, ImU32 tint, float wrap_em, F body) {
+void paper_tooltip(float s, ImU32 tint, float wrap_em, F body, bool scrollable = false) {
     ImGui::PushStyleColor(ImGuiCol_PopupBg, 0);
     ImGui::PushStyleColor(ImGuiCol_Border, 0);
     ImGui::PushStyleColor(ImGuiCol_Text, kInk);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, 0);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, IM_COL32(96, 80, 66, 150));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18 * s, 16 * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 6 * s);
+    if (scrollable)
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, ImGui::GetIO().DisplaySize.y - 24 * s));
     ImGui::BeginTooltip();
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (scrollable) {
+        if (g_tt_reset) ImGui::SetScrollY(0.0f);
+        else if (g_tt_wheel != 0.0f)
+            ImGui::SetScrollY(std::fmax(0.0f, std::fmin(ImGui::GetScrollMaxY(), ImGui::GetScrollY() - g_tt_wheel * ImGui::GetFontSize() * 4)));
+    }
     dl->ChannelsSplit(2);
     dl->ChannelsSetCurrent(1);
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * wrap_em);
     body();
     ImGui::PopTextWrapPos();
+    // "There is more below": a small inked arrow at the bottom edge.
+    if (scrollable && ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 1.0f) {
+        float cx = win->Pos.x + win->Size.x * 0.5f, by = win->Pos.y + win->Size.y - 10 * s, a = 7 * s;
+        ImDrawList* fdl = ImGui::GetWindowDrawList();
+        fdl->PushClipRectFullScreen();
+        fdl->AddTriangleFilled(ImVec2(cx - a, by - a * 0.6f), ImVec2(cx + a, by - a * 0.6f), ImVec2(cx, by + a * 0.4f), kInk);
+        fdl->PopClipRect();
+    }
     dl->ChannelsSetCurrent(0);
+    dl->PushClipRectFullScreen();
     paper(dl, win->Pos, ImVec2(win->Pos.x + win->Size.x, win->Pos.y + win->Size.y), tint, s);
+    dl->PopClipRect();
     dl->ChannelsMerge();
     ImGui::EndTooltip();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(5);
 }
 
 void unit_tooltip(const UnitInfo& u, float s) {
@@ -402,17 +431,18 @@ void unit_tooltip(const UnitInfo& u, float s) {
                 const AbilityInfo& a = u.abilities[i];
                 std::string an = ability_name(a, u);
                 if (an.empty()) continue;
-                icon_line(ability_icon(a, u), an, s);
-                if (a.mana_cost > 0) {
-                    ImGui::SameLine();
-                    icon_inline(Swf::Ui, "ManaIcon", 0, ImGui::GetFontSize());
-                    ImGui::SameLine(0, 2 * s);
-                    ImGui::Text("%d", a.mana_cost);
-                }
-                ImGui::PushStyleColor(ImGuiCol_Text, kInkSoft);
-                if (a.charge > 0) { ImGui::SameLine(); ImGui::Text("(%s %d)", w.charge, a.charge); }
-                if (a.uses_per_fight > 0) { ImGui::SameLine(); ImGui::Text("(%d %s)", a.uses_per_fight, w.per_fight); }
-                ImGui::PopStyleColor();
+                icon_entry(ability_icon(a, u), an, {}, s, [&] {
+                    if (a.mana_cost > 0) {
+                        ImGui::SameLine(0, 8 * s);
+                        icon_inline(Swf::Ui, "ManaIcon", 0, ImGui::GetFontSize());
+                        ImGui::SameLine(0, 2 * s);
+                        ImGui::Text("%d", a.mana_cost);
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, kInkSoft);
+                    if (a.charge > 0) { ImGui::SameLine(); ImGui::Text("(%s %d)", w.charge, a.charge); }
+                    if (a.uses_per_fight > 0) { ImGui::SameLine(); ImGui::Text("(%d %s)", a.uses_per_fight, w.per_fight); }
+                    ImGui::PopStyleColor();
+                });
             }
         }
         bool any_status = false;
@@ -428,7 +458,7 @@ void unit_tooltip(const UnitInfo& u, float s) {
             }
         }
         if (!u.on_board) wrapped_dim(std::string("(") + w.off_board + ")");
-    });
+    }, true);
 }
 
 void small_tooltip(const char* title, const std::string& body, float s) {
@@ -456,6 +486,14 @@ bool unit_row(const UnitInfo& u, int idx, float s, float inner_w) {
 
     ImGui::InvisibleButton("row", ImVec2(inner_w, row_h));
     bool row_hover = ImGui::IsItemHovered();
+    if (row_hover) {
+        // The wheel scrolls this unit's tooltip, not the party list.
+        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+        static const void* last_unit = nullptr;
+        g_tt_reset = last_unit != u.ch;
+        last_unit = u.ch;
+        g_tt_wheel = ImGui::GetIO().MouseWheel;
+    }
     if (row_hover) {
         ImVec2 q[4] = {ImVec2(p0.x - 6 * s, p0.y - 3 * s), ImVec2(p0.x + inner_w + 4 * s, p0.y - 4 * s),
                        ImVec2(p0.x + inner_w + 6 * s, p0.y + row_h + 3 * s), ImVec2(p0.x - 4 * s, p0.y + row_h + 4 * s)};
