@@ -241,6 +241,7 @@ bool parse_shape(const uint8_t* b, size_t n, size_t p, int code, Shape& s) {
 struct Seg { double x0, y0, x1, y1; };
 
 struct Canvas {
+    const float* mask = nullptr;   // multiplies coverage (clip layers)
     int w, h;
     std::vector<float> px;   // premultiplied RGBA
     std::vector<float> cov;
@@ -288,6 +289,7 @@ struct Canvas {
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x) {
                 float cv = std::min(1.0f, cov[(size_t)y * w + x]);
+                if (mask) cv *= mask[(size_t)y * w + x];
                 if (cv <= 0.0f) continue;
                 float c[4];
                 color_at(x + 0.5, y + 0.5, c);
@@ -323,6 +325,28 @@ void add_quad(std::vector<Seg>& out, double x0, double y0, double x1, double y1,
 }
 
 }  // namespace
+
+// --- per-render context (one render at a time per thread) ----------------------------------
+
+struct ResolvedOverride { SwfOverride::Mode mode; uint16_t cid; int frame; bool pos_only; uint16_t extra_cid; int extra_frame; };
+struct RenderCtx {
+    std::unordered_map<std::string, ResolvedOverride> ov;
+    const uint8_t* palette = nullptr;
+};
+thread_local const RenderCtx* t_ctx = nullptr;
+
+// The game's paletted shader: a grey (r==g==b) source colour picks entry
+// round(r*15) of the cat's palette row; anything coloured is left alone.
+void apply_col(const CX& cx, const uint8_t c[4], float out[4]) {
+    if (t_ctx && t_ctx->palette && std::abs(c[0] - c[1]) <= 1 && std::abs(c[0] - c[2]) <= 1) {
+        int i = (int)(c[0] / 255.0f * 15.0f + 0.5f);
+        const uint8_t* p = t_ctx->palette + i * 3;
+        uint8_t m[4] = {p[0], p[1], p[2], c[3]};
+        cx.apply(m, out);
+        return;
+    }
+    cx.apply(c, out);
+}
 
 // --- document ---------------------------------------------------------------------------
 
@@ -532,7 +556,7 @@ void SwfDoc::Impl::draw_shape(Canvas& cv, const Shape& s, const Mat& m, const CX
             cv.coverage(sg);
             if (f.type == 0) {
                 float c[4];
-                cx.apply(f.color, c);
+                apply_col(cx, f.color, c);
                 cv.composite([&](double, double, float* o) { memcpy(o, c, sizeof(c)); });
             } else if (f.type == 1 || f.type == 2) {
                 Mat inv;
@@ -551,7 +575,7 @@ void SwfDoc::Impl::draw_shape(Canvas& cv, const Shape& s, const Mat& m, const CX
                         double u = (r - st[k].first) / std::max(1, st[k + 1].first - st[k].first);
                         for (int i = 0; i < 4; ++i) col[i] = (uint8_t)(st[k].second[i] * (1 - u) + st[k + 1].second[i] * u);
                     }
-                    cx.apply(col, o);
+                    apply_col(cx, col, o);
                 });
             } else if (f.type == 3) {
                 auto bm = bitmap(f.bitmap);
@@ -559,7 +583,7 @@ void SwfDoc::Impl::draw_shape(Canvas& cv, const Shape& s, const Mat& m, const CX
                 if (!bm || !(m * f.m).inverse(inv)) {
                     uint8_t grey[4] = {128, 128, 128, 255};
                     float c[4];
-                    cx.apply(grey, c);
+                    apply_col(cx, grey, c);
                     cv.composite([&](double, double, float* o) { memcpy(o, c, sizeof(c)); });
                     continue;
                 }
@@ -569,7 +593,7 @@ void SwfDoc::Impl::draw_shape(Canvas& cv, const Shape& s, const Mat& m, const CX
                     int iu = (int)std::floor(u), iv = (int)std::floor(v);
                     if (f.smooth_repeat) { iu = ((iu % bm->w) + bm->w) % bm->w; iv = ((iv % bm->h) + bm->h) % bm->h; }
                     else { iu = std::clamp(iu, 0, bm->w - 1); iv = std::clamp(iv, 0, bm->h - 1); }
-                    cx.apply(&bm->rgba[((size_t)iv * bm->w + iu) * 4], o);
+                    apply_col(cx, &bm->rgba[((size_t)iv * bm->w + iu) * 4], o);
                 });
             }
         }
@@ -596,7 +620,7 @@ void SwfDoc::Impl::draw_shape(Canvas& cv, const Shape& s, const Mat& m, const CX
             }
             cv.coverage(segs);
             float c[4];
-            cx.apply(ln.color, c);
+            apply_col(cx, ln.color, c);
             cv.composite([&](double, double, float* o) { memcpy(o, c, sizeof(c)); });
         }
     }
@@ -608,12 +632,51 @@ void SwfDoc::Impl::draw(Canvas& cv, uint16_t id, const Mat& m, const CX& cx, int
     if (c->second.kind == 1) {
         if (auto s = shape(id)) draw_shape(cv, *s, m, cx);
     } else if (c->second.kind == 2) {
+        const float* inherited = cv.mask;
+        const size_t n = (size_t)cv.w * cv.h;
+        std::vector<std::pair<uint16_t, std::vector<float>>> masks;   // (clip depth, coverage)
+        std::vector<float> eff;
         for (auto& [d, pl] : display_list(id, frame)) {
-            if (!pl.cid || pl.clip) continue;
+            while (!masks.empty() && d > masks.back().first) masks.pop_back();
+            if (!pl.cid) continue;
             if (hidden && !pl.name.empty() &&
                 std::find(hidden->begin(), hidden->end(), pl.name) != hidden->end())
                 continue;
-            draw(cv, pl.cid, m * pl.m, cx * pl.cx, 0, depth + 1);
+            uint16_t cid = pl.cid, extra = 0;
+            int cframe = 0, eframe = 0;
+            Mat pm = pl.m;
+            if (t_ctx && !pl.name.empty()) {
+                auto o = t_ctx->ov.find(pl.name);
+                if (o != t_ctx->ov.end()) {
+                    if (o->second.mode == SwfOverride::Hide) continue;
+                    if (o->second.mode == SwfOverride::Replace) cid = o->second.cid;
+                    cframe = o->second.frame;
+                    extra = o->second.extra_cid;
+                    eframe = o->second.extra_frame;
+                    if (o->second.pos_only) pm = Mat{pl.m.a < 0 ? -1.0 : 1.0, 0, 0, 1.0, pl.m.tx, pl.m.ty};
+                }
+            }
+            if (pl.clip) {
+                // A mask layer: its coverage clips every depth up to pl.clip.
+                Canvas mc(cv.w, cv.h);
+                mc.mask = inherited;
+                draw(mc, cid, m * pm, CX{}, cframe, depth + 1);
+                std::vector<float> cov(n);
+                for (size_t i = 0; i < n; ++i) cov[i] = mc.px[i * 4 + 3];
+                masks.emplace_back(pl.clip, std::move(cov));
+                continue;
+            }
+            const float* use = inherited;
+            if (!masks.empty()) {
+                eff.assign(n, 1.0f);
+                if (inherited) for (size_t i = 0; i < n; ++i) eff[i] = inherited[i];
+                for (auto& mk : masks) for (size_t i = 0; i < n; ++i) eff[i] *= mk.second[i];
+                use = eff.data();
+            }
+            cv.mask = use;
+            draw(cv, cid, m * pm, cx * pl.cx, cframe, depth + 1);
+            if (extra) draw(cv, extra, m * pm, cx * pl.cx, eframe, depth + 1);
+            cv.mask = inherited;
         }
     }
 }
@@ -776,6 +839,60 @@ bool SwfDoc::load(std::vector<uint8_t>&& file) {
         return true;
     });
     return !symbols_.empty();
+}
+
+bool SwfDoc::render_ex(const std::string& symbol, int frame, int size, const SwfRenderOpts& opts, SwfImage& out) const {
+    auto it = symbols_.find(symbol);
+    if (it == symbols_.end() || size <= 0) return false;
+    RenderCtx ctx;
+    ctx.palette = opts.palette;
+    for (auto& [name, o] : opts.overrides) {
+        ResolvedOverride r{o.mode, 0, o.frame, o.pos_only, 0, o.extra_frame};
+        if (!o.extra_symbol.empty()) {
+            auto e = symbols_.find(o.extra_symbol);
+            if (e != symbols_.end()) r.extra_cid = e->second;
+        }
+        if (o.mode == SwfOverride::Replace) {
+            auto s2 = symbols_.find(o.symbol);
+            if (s2 == symbols_.end()) r.mode = SwfOverride::Hide;
+            else r.cid = s2->second;
+        }
+        ctx.ov.emplace(name, r);
+    }
+    // Size by the reference symbol (e.g. the bare head), then give the parts room.
+    auto ref = opts.bounds_symbol.empty() ? it : symbols_.find(opts.bounds_symbol);
+    if (ref == symbols_.end()) ref = it;
+    double x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30;
+    impl_->bounds(ref->second, Mat{}, opts.bounds_symbol.empty() ? frame : opts.bounds_frame, 0, x0, y0, x1, y1);
+    if (x1 <= x0 || y1 <= y0) return false;
+    double mw = (x1 - x0) * opts.margin, mh = (y1 - y0) * opts.margin;
+    x0 -= mw; x1 += mw; y0 -= mh; y1 += mh;
+    double sc = size * 20.0 / std::max(x1 - x0, y1 - y0);
+    int w = (int)std::ceil((x1 - x0) * sc / 20) + 2, h = (int)std::ceil((y1 - y0) * sc / 20) + 2;
+    if (w > 2048 || h > 2048) return false;
+    Canvas cv(w, h);
+    t_ctx = &ctx;
+    impl_->draw(cv, it->second, Mat{sc, 0, 0, sc, -x0 * sc + 20, -y0 * sc + 20}, CX{}, frame, 0);
+    t_ctx = nullptr;
+    int cx0 = w, cy0 = h, cx1 = -1, cy1 = -1;   // crop to the opaque area
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            if (cv.px[((size_t)y * w + x) * 4 + 3] > 0.02f) {
+                cx0 = std::min(cx0, x); cy0 = std::min(cy0, y); cx1 = std::max(cx1, x); cy1 = std::max(cy1, y);
+            }
+    if (cx1 < 0) return false;
+    out.w = cx1 - cx0 + 1;
+    out.h = cy1 - cy0 + 1;
+    out.rgba.resize((size_t)out.w * out.h * 4);
+    for (int y = 0; y < out.h; ++y)
+        for (int x = 0; x < out.w; ++x) {
+            const float* src = &cv.px[((size_t)(y + cy0) * w + (x + cx0)) * 4];
+            uint8_t* d = &out.rgba[((size_t)y * out.w + x) * 4];
+            float a = src[3];
+            for (int k = 0; k < 3; ++k) d[k] = (uint8_t)std::clamp(a > 0 ? src[k] / a * 255.0f : 0.0f, 0.0f, 255.0f);
+            d[3] = (uint8_t)std::clamp(a * 255.0f, 0.0f, 255.0f);
+        }
+    return true;
 }
 
 int SwfDoc::frame_of_label(const std::string& symbol, const std::string& label) const {

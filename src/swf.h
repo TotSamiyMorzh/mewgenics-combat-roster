@@ -42,8 +42,28 @@ struct SwfFont {
     bool raster(int glyph, float scale, int& w, int& h, float& ox, float& oy, std::vector<uint8_t>& alpha) const;
 };
 
+// Per-render tweaks for composed art (the game's cat portraits).
+struct SwfOverride {
+    enum Mode { Frame, Replace, Hide } mode = Frame;
+    std::string symbol;      // Replace: draw this exported symbol instead
+    int frame = 0;           // frame for the (replacement) sprite
+    bool pos_only = false;   // keep only the marker's position (and its mirror sign)
+    std::string extra_symbol;  // also draw this symbol at the same place (e.g. a brow over an eye)
+    int extra_frame = 0;
+};
+struct SwfRenderOpts {
+    std::unordered_map<std::string, SwfOverride> overrides;   // by instance name
+    const uint8_t* palette = nullptr;   // 16 RGB triplets: greys are remapped like the game's paletted shader
+    std::string bounds_symbol;          // size the image by this symbol's frame instead
+    int bounds_frame = 0;
+    float margin = 0.6f;                // canvas grows by this fraction around those bounds
+};
+
 class SwfDoc {
 public:
+    // Like render(), with overrides/palette/masks; output cropped to its opaque area.
+    bool render_ex(const std::string& symbol, int frame, int size, const SwfRenderOpts& opts, SwfImage& out) const;
+
     // Font by (prefix of) its name, e.g. "TikaFontIntl". Null if absent.
     std::shared_ptr<SwfFont> font(const std::string& name_prefix) const;
     // A DefineBitsLossless bitmap by character id, as RGBA.

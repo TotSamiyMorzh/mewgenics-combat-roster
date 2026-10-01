@@ -31,6 +31,11 @@ int asset_frame_of_label(Swf swf, const std::string& symbol, const std::string& 
 Tex asset_bitmap(int id);
 // A PNG from the archive, e.g. "textures/cursor/default.png".
 Tex asset_png(const std::string& path);
+// A cat's face composed from catparts.swf (see catportrait.h).
+struct CatLook;
+Tex asset_cat(const CatLook& look, int px);
+// palette.png row for a class in battle (classes.gon graphics.palette), or -1.
+int class_palette(const std::string& cls);
 // Cursor hotspot in texture pixels (textures/cursor/hotspots.gon).
 void cursor_hotspot(const std::string& state, float& x, float& y);
 

@@ -104,3 +104,12 @@ Native DLL mod loaded by **Mewjector** (version.dll proxy, MIT, community standa
 - 2026-10-02: localisation: `data/text/combined.csv` has ru; we use the game's own StringsDatabase instead
   (language follows the game). id -> key maps from GON: items `name/desc`, abilities `meta.name/desc`
   (+variant_of), passives `name/desc`, classes `meta.name`, statuses keyword_tooltips.gon (+alias).
+- 2026-10-02: v0.5 real cat faces. `glaiel::CatParts::init` (sub_14073CC70, CatArt.cpp) builds cats from
+  swfs/catparts.swf; placement in sub_1407393E0 from `CatHeadPlacements` frame head-1: markers lear/rear (full
+  matrix), leye/reye + mouth (position only, scale 1, reye mirrored), ahead/aface/aneck (items); `tex` slot frame =
+  texture-1; head fill is a clip mask (depth 1 clips to 29). Colour = shaders/paletted_full.shader: grey source
+  r -> textures/palette.png[row][round(r*15)]; in battle row = class palette (classes.gon graphics.palette:
+  Medic 52, Butcher 64, Tank 51, Tinkerer 63 ...). CatData BodyParts @+0x60: tex +0x18, palette +0x1C,
+  descriptors @+0x2C stride 0x54, part idx +4. Run cats: MewDirector+1432 registry, unordered_map at +0xE8
+  (list head +0xF0, node key +0x10, CatData* +0x18). Items on the face: hats need an extra offset not yet found,
+  so portraits are drawn without them.

@@ -6,6 +6,8 @@
 // Strings here are raw game ids / localisation keys; the panel translates them.
 #pragma once
 
+#include "catportrait.h"
+
 #include <cstdint>
 
 namespace cr {
@@ -41,6 +43,7 @@ struct UnitInfo {
     char cls[32]      = {};     // class id: "Medic", "Butcher"; "Boss"/"Enemy" for others
 
     bool has_cat = false;       // CatData resolved
+    CatLook look;               // face parts; look.palette = heritable row (panel swaps in the class row)
     int  stats[7] = {};         // str dex con int spd cha lck
     int  level = 0;
     char equip[5][48] = {};     // item ids: head face neck weapon trinket

@@ -10,6 +10,7 @@ set(IMGUI ${CMAKE_SOURCE_DIR}/third_party/imgui)
 
 add_library(combat_roster SHARED
     src/assets.cpp
+    src/catportrait.cpp
     src/dllmain.cpp
     src/fontloader.cpp
     src/gon.cpp
@@ -63,3 +64,7 @@ add_executable(glyph_test tools/glyph_test.cpp src/gpak.cpp src/swf.cpp)
 target_include_directories(glyph_test PRIVATE src third_party)
 target_compile_definitions(glyph_test PRIVATE STB_IMAGE_WRITE_IMPLEMENTATION)
 target_compile_options(glyph_test PRIVATE /utf-8 /EHsc /O2)
+add_executable(cat_test tools/cat_test.cpp src/catportrait.cpp src/gpak.cpp src/swf.cpp)
+target_include_directories(cat_test PRIVATE src third_party)
+target_compile_definitions(cat_test PRIVATE STB_IMAGE_WRITE_IMPLEMENTATION)
+target_compile_options(cat_test PRIVATE /utf-8 /EHsc /O2)

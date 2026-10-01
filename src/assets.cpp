@@ -1,5 +1,7 @@
 #include "assets.h"
 
+#include "catportrait.h"
+
 #include "game.h"
 #include "gon.h"
 #include "gpak.h"
@@ -28,7 +30,8 @@ namespace cr {
 namespace {
 
 struct Img {
-    int kind = 0;            // 0 swf symbol, 1 ui.swf bitmap id, 2 png in the archive
+    int kind = 0;            // 0 swf symbol, 1 ui.swf bitmap id, 2 png in the archive, 3 cat face
+    CatLook look;
     Swf swf;
     std::string symbol;
     int frame, px;
@@ -46,6 +49,8 @@ struct State {
     std::unordered_map<std::string, TextKeys> items, abilities, passives, classes, keywords;
     std::unordered_map<std::string, std::string> portrait_by_name;
     std::unordered_map<std::string, std::pair<float, float>> hotspots;
+    std::unordered_map<std::string, int> class_palettes;
+    std::vector<uint8_t> palette;   // textures/palette.png, 256 rows x 16 RGB
     std::shared_ptr<SwfFont> body_font, title_font;
 
     std::mutex mu;
@@ -106,6 +111,10 @@ void build_maps() {
         if (!k.name.empty() || !k.desc.empty()) g.abilities[e.key] = k;
     });
     load_gon_dir("data/classes/", [](const Gon& e) {
+        if (const Gon* gr = e.get("graphics")) {
+            std::string p = gr->str("palette");
+            if (!p.empty()) g.class_palettes[e.key] = atoi(p.c_str());
+        }
         if (const Gon* meta = e.get("meta")) g.classes[e.key] = {meta->str("name"), meta->str("description"), {}};
     });
     load_gon_dir("data/characters/", [](const Gon& e) {
@@ -173,6 +182,17 @@ void worker_body(const std::string& game_dir) {
     log_line("assets: catparts.swf %s, ability_icons.swf %s", cp_ok ? "ok" : "FAILED", ai_ok ? "ok" : "FAILED");
     build_maps();
     {
+        std::vector<uint8_t> png;
+        int w = 0, h = 0, n = 0;
+        if (g.gpak.read("textures/palette.png", png))
+            if (uint8_t* px = stbi_load_from_memory(png.data(), (int)png.size(), &w, &h, &n, 3)) {
+                if (w == 16) g.palette.assign(px, px + (size_t)w * h * 3);
+                stbi_image_free(px);
+            }
+        log_line("assets: palette %s (%zu rows), %zu class palettes", g.palette.empty() ? "MISSING" : "ok",
+                 g.palette.size() / 48, g.class_palettes.size());
+    }
+    {
         SwfDoc intl;   // 86 MB; keep only the two fonts we use
         if (g.gpak.read("swfs/international_fonts.swf", buf) && intl.load(std::move(buf))) {
             g.body_font = intl.font("TikaFontIntl");
@@ -197,6 +217,7 @@ void worker_body(const std::string& game_dir) {
             auto it = g.imgs.find(key);
             if (it == g.imgs.end()) continue;
             job.kind = it->second.kind; job.swf = it->second.swf; job.symbol = it->second.symbol;
+            job.look = it->second.look;
             job.frame = it->second.frame; job.px = it->second.px;
         }
         SwfImage im;
@@ -204,6 +225,12 @@ void worker_body(const std::string& game_dir) {
         try {
             if (job.kind == 0) {
                 ok = doc_of(job.swf).render(job.symbol, job.frame, job.px, im);
+            } else if (job.kind == 3) {
+                int row = job.look.palette;
+                if (!g.palette.empty() && row >= 0 && (size_t)row * 48 < g.palette.size()) {
+                    SwfRenderOpts o = cat_face_opts(job.look, &g.palette[(size_t)row * 48]);
+                    ok = g.catparts.render_ex("CatHeadPlacements", job.look.head - 1, job.px, o, im);
+                }
             } else if (job.kind == 1) {
                 ok = g.ui.bitmap((uint16_t)job.frame, im);
             } else {
@@ -253,6 +280,29 @@ Tex request(int kind, Swf swf, const std::string& symbol, int frame, int px);
 
 Tex asset_image(Swf swf, const std::string& symbol, int frame, int px) { return request(0, swf, symbol, frame, px); }
 Tex asset_bitmap(int id) { return request(1, Swf::Ui, "#bitmap", id, 0); }
+
+Tex asset_cat(const CatLook& look, int px) {
+    if (!g.ready || look.head <= 0) return {};
+    std::string key = "3|" + look.key() + "|" + std::to_string(px);
+    std::lock_guard<std::mutex> lk(g.mu);
+    auto it = g.imgs.find(key);
+    if (it == g.imgs.end()) {
+        Img im;
+        im.kind = 3; im.look = look; im.px = px; im.symbol = "#cat";
+        g.imgs.emplace(key, std::move(im));
+        g.queue.push_back(key);
+        g.cv.notify_one();
+        return {};
+    }
+    Tex t;
+    if (it->second.state == 2) { t.id = it->second.tex; t.w = (float)it->second.pixels.w; t.h = (float)it->second.pixels.h; }
+    return t;
+}
+
+int class_palette(const std::string& cls) {
+    auto it = g.class_palettes.find(cls);
+    return it == g.class_palettes.end() ? -1 : it->second;
+}
 Tex asset_png(const std::string& path) { return request(2, Swf::Ui, path, 0, 0); }
 
 void cursor_hotspot(const std::string& state, float& x, float& y) {

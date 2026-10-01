@@ -97,6 +97,13 @@ const void* cat_of(const void* ch) {
 
 void read_cat(const void* cat, UnitInfo& u) {
     u.has_cat = true;
+    u.look.head  = rdv<int32_t>(cat, off::Cat_PartIdx(1));
+    u.look.eye   = rdv<int32_t>(cat, off::Cat_PartIdx(7));
+    u.look.brow  = rdv<int32_t>(cat, off::Cat_PartIdx(9));
+    u.look.ear   = rdv<int32_t>(cat, off::Cat_PartIdx(11));
+    u.look.mouth = rdv<int32_t>(cat, off::Cat_PartIdx(13));
+    u.look.tex   = rdv<int32_t>(cat, off::Cat_Texture);
+    u.look.palette = rdv<int32_t>(cat, off::Cat_Palette);
     int32_t a[7] = {}, b[7] = {}, c[7] = {};
     rd(cat, off::Cat_StatsBase, a);
     rd(cat, off::Cat_StatsLvl, b);

@@ -128,6 +128,12 @@ constexpr uintptr_t Equip_Name    = 0x08;   // std::string GON id
 constexpr uintptr_t Cat_Level     = 0xC30;  // u32
 constexpr uintptr_t Cat_SqlKey    = 0xC48;  // i64
 constexpr uintptr_t Cat_Coi       = 0xC50;  // double
+// BodyParts at CatData+0x60: texture idx +0x18, heritable palette +0x1C, then
+// 14 BodyPartDescriptors of 0x54 bytes from +0x2C (part sprite idx at +4):
+// body head tail leg1 leg2 arm1 arm2 leye reye lbrow rbrow lear rear mouth.
+constexpr uintptr_t Cat_Texture   = 0x60 + 0x18;
+constexpr uintptr_t Cat_Palette   = 0x60 + 0x1C;
+constexpr uintptr_t Cat_PartIdx(int part) { return 0x60 + 0x2C + part * 0x54 + 4; }
 
 // StatusMenu (the battle HUD component)
 constexpr uintptr_t SM_HoverTile  = 124;   // iVec2D, unaligned

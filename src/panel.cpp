@@ -507,8 +507,22 @@ bool unit_row(const UnitInfo& u, int idx, float s, float inner_w) {
     Swf swf;
     std::string sym = portrait_symbol(u, swf);
     dl->PushClipRect(ImVec2(c.x - r + 2 * s, c.y - r + 2 * s), ImVec2(c.x + r - 2 * s, c.y + r - 2 * s), true);
-    if (sym.empty() || !image_fit(dl, swf, sym, 0, ImVec2(c.x - r * 0.95f, c.y - r * 0.95f),
-                                  ImVec2(c.x + r * 0.95f, c.y + r * 0.95f), 112)) {
+    bool drawn = false;
+    if (u.has_cat && u.look.head > 0) {
+        // The cat's own face, in its class colours like on the battlefield.
+        CatLook look = u.look;
+        int cp = class_palette(u.cls);
+        if (cp >= 0) look.palette = cp;
+        Tex t = asset_cat(look, 480);   // rendered large: the face is ~1/3 of the canvas before cropping
+        if (t.id) {
+            float k = std::fmin(r * 1.9f / t.w, r * 1.75f / t.h);
+            ImVec2 h(t.w * k * 0.5f, t.h * k * 0.5f);
+            dl->AddImage((ImTextureID)t.id, ImVec2(c.x - h.x, c.y - h.y + r * 0.08f), ImVec2(c.x + h.x, c.y + h.y + r * 0.08f));
+            drawn = true;
+        }
+    }
+    if (!drawn && (sym.empty() || !image_fit(dl, swf, sym, 0, ImVec2(c.x - r * 0.95f, c.y - r * 0.95f),
+                                  ImVec2(c.x + r * 0.95f, c.y + r * 0.95f), 112))) {
         char ini[8] = {};
         const char* nm = u.name[0] ? u.name : "?";
         size_t n = (unsigned char)nm[0] >= 0xE0 ? 3 : (unsigned char)nm[0] >= 0xC0 ? 2 : 1;
