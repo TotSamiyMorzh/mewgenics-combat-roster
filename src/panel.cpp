@@ -515,7 +515,7 @@ bool unit_row(const UnitInfo& u, int idx, float s, float inner_w) {
         if (cp >= 0) look.palette = cp;
         Tex t = asset_cat(look, 480);   // rendered large: the face is ~1/3 of the canvas before cropping
         if (t.id) {
-            float k = std::fmin(r * 1.9f / t.w, r * 1.75f / t.h);
+            float k = std::fmin(r * 2.3f / t.w, r * 2.1f / t.h);
             ImVec2 h(t.w * k * 0.5f, t.h * k * 0.5f);
             dl->AddImage((ImTextureID)t.id, ImVec2(c.x - h.x, c.y - h.y + r * 0.08f), ImVec2(c.x + h.x, c.y + h.y + r * 0.08f));
             drawn = true;
