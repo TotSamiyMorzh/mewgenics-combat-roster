@@ -601,6 +601,136 @@ void SwfDoc::Impl::draw(Canvas& cv, uint16_t id, const Mat& m, const CX& cx, int
     }
 }
 
+// --- fonts ----------------------------------------------------------------------------------
+
+namespace {
+// A glyph is a SHAPE without style arrays; fill style 1 is the glyph itself.
+void parse_glyph(const uint8_t* b, size_t start, size_t end, SwfFont::Glyph& g) {
+    Bits bs(b, end, start);
+    int nf = bs.ub(4), nl = bs.ub(4);
+    double x = 0, y = 0;
+    int f0 = 0, f1 = 0;
+    g.x0 = g.y0 = 1e9f;
+    g.x1 = g.y1 = -1e9f;
+    auto add = [&](double ax, double ay, double bx, double by) {
+        if (f1) { g.segs.insert(g.segs.end(), {(float)ax, (float)ay, (float)bx, (float)by}); }
+        if (f0) { g.segs.insert(g.segs.end(), {(float)bx, (float)by, (float)ax, (float)ay}); }
+        g.x0 = std::min({g.x0, (float)ax, (float)bx}); g.x1 = std::max({g.x1, (float)ax, (float)bx});
+        g.y0 = std::min({g.y0, (float)ay, (float)by}); g.y1 = std::max({g.y1, (float)ay, (float)by});
+    };
+    for (int guard = 0; guard < 100000 && bs.p < end; ++guard) {
+        if (bs.ub(1) == 0) {
+            int nw = bs.ub(1), ls = bs.ub(1), fs1 = bs.ub(1), fs0 = bs.ub(1), mv = bs.ub(1);
+            if (!(nw | ls | fs1 | fs0 | mv)) break;
+            if (mv) { int k = bs.ub(5); x = bs.sb(k); y = bs.sb(k); }
+            if (fs0) f0 = bs.ub(nf);
+            if (fs1) f1 = bs.ub(nf);
+            if (ls) bs.ub(nl);
+            if (nw) break;   // never in glyphs
+        } else if (bs.ub(1)) {
+            int k = bs.ub(4) + 2;
+            double dx = 0, dy = 0;
+            if (bs.ub(1)) { dx = bs.sb(k); dy = bs.sb(k); }
+            else if (bs.ub(1)) dy = bs.sb(k);
+            else dx = bs.sb(k);
+            add(x, y, x + dx, y + dy);
+            x += dx; y += dy;
+        } else {
+            int k = bs.ub(4) + 2;
+            double cx = x + bs.sb(k), cy = y + bs.sb(k);
+            double ex = cx + bs.sb(k), ey = cy + bs.sb(k);
+            double px = x, py = y;
+            for (int i = 1; i <= 6; ++i) {
+                double t = i / 6.0, u = 1 - t;
+                double qx = u * u * x + 2 * u * t * cx + t * t * ex, qy = u * u * y + 2 * u * t * cy + t * t * ey;
+                add(px, py, qx, qy);
+                px = qx; py = qy;
+            }
+            x = ex; y = ey;
+        }
+    }
+    if (g.segs.empty()) g.x0 = g.y0 = g.x1 = g.y1 = 0;
+}
+}  // namespace
+
+bool SwfFont::raster(int glyph, float scale, int& w, int& h, float& ox, float& oy, std::vector<uint8_t>& alpha) const {
+    if (glyph < 0 || glyph >= (int)glyphs.size()) return false;
+    const Glyph& g = glyphs[glyph];
+    if (g.segs.empty()) { w = h = 0; return true; }
+    int px0 = (int)std::floor(g.x0 * scale) - 1, py0 = (int)std::floor(g.y0 * scale) - 1;
+    int px1 = (int)std::ceil(g.x1 * scale) + 1, py1 = (int)std::ceil(g.y1 * scale) + 1;
+    w = px1 - px0;
+    h = py1 - py0;
+    if (w <= 0 || h <= 0 || w > 512 || h > 512) return false;
+    std::vector<Seg> segs;
+    segs.reserve(g.segs.size() / 4);
+    for (size_t i = 0; i + 3 < g.segs.size(); i += 4)
+        segs.push_back({g.segs[i] * scale - px0, g.segs[i + 1] * scale - py0, g.segs[i + 2] * scale - px0,
+                        g.segs[i + 3] * scale - py0});
+    Canvas cv(w, h);
+    cv.coverage(segs);
+    alpha.resize((size_t)w * h);
+    for (size_t i = 0; i < alpha.size(); ++i) alpha[i] = (uint8_t)std::min(255.0f, cv.cov[i] * 255.0f + 0.5f);
+    ox = (float)px0;
+    oy = (float)py0;
+    return true;
+}
+
+std::shared_ptr<SwfFont> SwfDoc::font(const std::string& prefix) const {
+    std::shared_ptr<SwfFont> out;
+    if (!impl_) return out;
+    int nbits = body_[0] >> 3;
+    size_t pos = (5 + 4 * nbits + 7) / 8 + 4;
+    for_tags(body_, pos, body_.size(), [&](int code, size_t p, size_t len) {
+        if (code != 75 && code != 48) return true;
+        const uint8_t* b = body_.data();
+        size_t end = p + len;
+        uint8_t flags = b[p + 2];
+        size_t nl = b[p + 4];
+        std::string name((const char*)b + p + 5, nl);
+        while (!name.empty() && name.back() == 0) name.pop_back();
+        if (name.rfind(prefix, 0) != 0) return true;
+        size_t q = p + 5 + nl;
+        int ng = rd16(body_, q);
+        q += 2;
+        bool wide_off = flags & 0x08, wide_codes = flags & 0x04, has_layout = flags & 0x80;
+        size_t osz = wide_off ? 4 : 2;
+        auto off_at = [&](int i) -> size_t {
+            size_t a = q + i * osz;
+            return wide_off ? (size_t)(b[a] | b[a + 1] << 8 | b[a + 2] << 16 | (size_t)b[a + 3] << 24) : rd16(body_, a);
+        };
+        auto f = std::make_shared<SwfFont>();
+        f->name = name;
+        f->glyphs.resize(ng);
+        size_t codes = q + off_at(ng);
+        for (int i = 0; i < ng; ++i) {
+            parse_glyph(b, q + off_at(i), q + (i + 1 < ng ? off_at(i + 1) : off_at(ng)), f->glyphs[i]);
+            uint32_t cp = wide_codes ? rd16(body_, codes + 2 * i) : b[codes + i];
+            f->index[cp] = i;
+        }
+        size_t lay = codes + (wide_codes ? 2 : 1) * ng;
+        if (has_layout && lay + 6 + 2 * ng <= end) {
+            f->ascent = (float)(int16_t)rd16(body_, lay);
+            f->descent = (float)(int16_t)rd16(body_, lay + 2);
+            f->leading = (float)(int16_t)rd16(body_, lay + 4);
+            for (int i = 0; i < ng; ++i) f->glyphs[i].advance = (float)(int16_t)rd16(body_, lay + 6 + 2 * i);
+        }
+        out = f;
+        return false;
+    });
+    return out;
+}
+
+bool SwfDoc::bitmap(uint16_t id, SwfImage& out) const {
+    if (!impl_) return false;
+    auto bm = impl_->bitmap(id);
+    if (!bm) return false;
+    out.w = bm->w;
+    out.h = bm->h;
+    out.rgba = bm->rgba;
+    return true;
+}
+
 // --- public -------------------------------------------------------------------------------
 
 bool SwfDoc::load(std::vector<uint8_t>&& file) {

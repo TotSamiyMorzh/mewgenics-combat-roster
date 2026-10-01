@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace cr {
@@ -24,6 +25,12 @@ struct Tex {
 // Rasterised at `px` (longer side). Queues the render on first use.
 Tex asset_image(Swf swf, const std::string& symbol, int frame, int px);
 bool asset_has(Swf swf, const std::string& symbol);
+// A raw bitmap from ui.swf by character id (e.g. the paper texture).
+Tex asset_bitmap(int id);
+// A PNG from the archive, e.g. "textures/cursor/default.png".
+Tex asset_png(const std::string& path);
+// Cursor hotspot in texture pixels (textures/cursor/hotspots.gon).
+void cursor_hotspot(const std::string& state, float& x, float& y);
 
 void assets_upload_pending();   // game thread, GL context current
 void assets_gl_lost();          // the GL context was recreated
@@ -31,6 +38,7 @@ void assets_gl_lost();          // the GL context was recreated
 // --- data ------------------------------------------------------------------
 struct TextKeys {
     std::string name, desc, desc_stacks;
+    std::string ability;   // items: the ability the item grants
 };
 const TextKeys* keys_item(const std::string& id);
 const TextKeys* keys_ability(const std::string& id);
@@ -39,6 +47,12 @@ const TextKeys* keys_class(const std::string& id);
 const TextKeys* keys_keyword(const std::string& id);
 // Portrait clip for a non-cat character, by its name key (Character+0x248).
 std::string portrait_for(const std::string& name_key);
+
+// --- fonts -----------------------------------------------------------------
+struct SwfFont;
+// The game's fonts (from swfs/international_fonts.swf, Latin + Cyrillic).
+std::shared_ptr<SwfFont> font_body();    // TikaFontIntl
+std::shared_ptr<SwfFont> font_title();   // Mewgenics Organ Grinder Cyr
 
 // --- status icons ----------------------------------------------------------
 // StatusIcon frame (0-based) for a status class name and stack sign, or -1 if

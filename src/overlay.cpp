@@ -15,6 +15,7 @@
 #include "game.h"
 #include "log.h"
 #include "assets.h"
+#include "fontloader.h"
 #include "panel.h"
 #include "roster.h"
 
@@ -24,6 +25,8 @@
 #include <windows.h>
 #include <GL/gl.h>
 
+#include <cmath>
+#include <cstdlib>
 #include <string>
 
 #include "imgui.h"
@@ -72,6 +75,8 @@ struct State {
     PanelState panel;
     std::string game_dir;
     bool     icons_ok = false;
+    bool     fonts_added = false;
+    float    cursor_scale = 0.70f;   // [cursor] scale in combat_roster.ini
 } g;
 
 // --- window / input --------------------------------------------------------------
@@ -85,11 +90,18 @@ BOOL CALLBACK find_game_window(HWND hwnd, LPARAM out) {
     return FALSE;
 }
 
+const LPARAM kOffscreenPos = MAKELPARAM((WORD)(SHORT)-16000, (WORD)(SHORT)-16000);
+
 LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (g.imgui_ok) {
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
         if (g.capture_mouse) {
             switch (msg) {
+            case WM_MOUSEMOVE:
+                // The game must not see the pointer over the board under our
+                // panel: hand SDL a position far outside the window instead.
+                // (We draw the game's cursor ourselves while this is on.)
+                return CallWindowProcW(g.prev_proc, hwnd, msg, wp, kOffscreenPos);
             case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
             case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
             case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
@@ -128,16 +140,19 @@ bool init_imgui() {
     io.LogFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;  // the game owns the cursor
 
-    ImGui::StyleColorsDark();
+    ImGui::StyleColorsLight();
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 6.0f;
     st.FrameRounding = 3.0f;
     st.WindowBorderSize = 1.0f;
     st.WindowPadding = ImVec2(8, 8);
     st.ItemSpacing = ImVec2(6, 5);
-    st.Colors[ImGuiCol_WindowBg] = ImVec4(0.09f, 0.08f, 0.10f, 0.88f);
-    st.Colors[ImGuiCol_PopupBg]  = ImVec4(0.10f, 0.09f, 0.11f, 0.96f);
-    st.Colors[ImGuiCol_Border]   = ImVec4(0.55f, 0.45f, 0.30f, 0.60f);
+    // Paper and ink, matching the panel, for anything ImGui draws by default.
+    st.Colors[ImGuiCol_Text]     = ImVec4(0.09f, 0.08f, 0.09f, 1.00f);
+    st.Colors[ImGuiCol_TextDisabled] = ImVec4(0.38f, 0.31f, 0.26f, 1.00f);
+    st.Colors[ImGuiCol_WindowBg] = ImVec4(0.91f, 0.88f, 0.82f, 0.96f);
+    st.Colors[ImGuiCol_PopupBg]  = ImVec4(0.91f, 0.88f, 0.82f, 0.98f);
+    st.Colors[ImGuiCol_Border]   = ImVec4(0.09f, 0.08f, 0.09f, 0.90f);
     g.base_style = st;
     load_fonts();
 
@@ -193,6 +208,22 @@ void apply_scale(float display_h) {
     st.FontScaleMain = s;
 }
 
+// While the game's pointer is parked off-window, draw the game's own cursor
+// art where the real pointer is. Size follows the 16:9 content height the way
+// the game scales its cursor (calibrated from a 1080p screenshot).
+void draw_game_cursor() {
+    Tex t = asset_png("textures/cursor/default.png");
+    if (!t.id) return;
+    ImGuiIO& io = ImGui::GetIO();
+    float content_h = std::fmin(io.DisplaySize.y, io.DisplaySize.x * 9.0f / 16.0f);
+    float k = content_h / 1080.0f * g.cursor_scale;
+    float hx, hy;
+    cursor_hotspot("default", hx, hy);
+    ImVec2 m = io.MousePos;
+    ImVec2 a(m.x - hx * k, m.y - hy * k);
+    ImGui::GetForegroundDrawList()->AddImage((ImTextureID)t.id, a, ImVec2(a.x + t.w * k, a.y + t.h * k));
+}
+
 void render_frame() {
     LARGE_INTEGER now, freq;
     QueryPerformanceCounter(&now);
@@ -202,8 +233,20 @@ void render_frame() {
     if (dt <= 0.0f || dt > 0.25f) dt = 1.0f / 60.0f;
 
     bool in_battle = battle_active();
-    if (!g.panel.loaded) panel_load(g.panel, g.game_dir);
+    if (!g.panel.loaded) {
+        panel_load(g.panel, g.game_dir);
+        char v[32];
+        GetPrivateProfileStringA("cursor", "scale", "0.70", v, sizeof(v), g.panel.ini_path.c_str());
+        g.cursor_scale = (float)atof(v);
+    }
     if (in_battle && !g.icons_ok && assets_ready()) g.icons_ok = status_icons_init();
+    if (!g.fonts_added && assets_ready()) {
+        // The game's own fonts, added between frames (ImGui 1.92 fonts are dynamic).
+        g.fonts_added = true;
+        if (ImFont* body = add_swf_font(font_body(), 18.0f)) ImGui::GetIO().FontDefault = body;
+        g.panel.title_font = add_swf_font(font_title(), 18.0f);
+        log_line("overlay: game fonts %s", ImGui::GetIO().FontDefault ? "in use" : "unavailable, using Segoe UI");
+    }
     assets_upload_pending();
     if (in_battle) roster_build(g.roster);
     else g.roster.valid = false;
@@ -218,8 +261,14 @@ void render_frame() {
         hover = panel_draw(g.roster, g.panel, dt, g.ui_scale);
     set_hover_unit(hover);
 
-    ImGui::Render();
+    bool was_capturing = g.capture_mouse;
     g.capture_mouse = in_battle && ImGui::GetIO().WantCaptureMouse;
+    if (g.capture_mouse) {
+        draw_game_cursor();
+        // Pull the game's pointer off the board right away, not on the next move.
+        if (!was_capturing) CallWindowProcW(g.prev_proc, g.hwnd, WM_MOUSEMOVE, 0, kOffscreenPos);
+    }
+    ImGui::Render();
 
     // Draw into the default framebuffer with clean unpack state; the game may
     // have left an offscreen target or a PBO bound, and both fail silently.

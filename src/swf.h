@@ -23,8 +23,31 @@ struct SwfImage {
     std::vector<uint8_t> rgba;   // straight alpha, row-major
 };
 
+// A DefineFont3 font: glyph outlines in font units (EM = 20480).
+struct SwfFont {
+    struct Glyph {
+        std::vector<float> segs;   // x0 y0 x1 y1 per edge, oriented for nonzero fill
+        float advance = 0;
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;   // bounds
+    };
+    std::string name;
+    std::unordered_map<uint32_t, int> index;   // codepoint -> glyph
+    std::vector<Glyph> glyphs;
+    float ascent = 0, descent = 0, leading = 0;
+    static constexpr float kEm = 20480.0f;
+
+    // Alpha8 coverage of a glyph at `scale` px per font unit. (ox, oy) is the
+    // bitmap's top-left relative to the pen position on the baseline.
+    bool raster(int glyph, float scale, int& w, int& h, float& ox, float& oy, std::vector<uint8_t>& alpha) const;
+};
+
 class SwfDoc {
 public:
+    // Font by (prefix of) its name, e.g. "TikaFontIntl". Null if absent.
+    std::shared_ptr<SwfFont> font(const std::string& name_prefix) const;
+    // A DefineBitsLossless bitmap by character id, as RGBA.
+    bool bitmap(uint16_t id, SwfImage& out) const;
+
     bool load(std::vector<uint8_t>&& file);
     bool has(const std::string& symbol) const { return symbols_.count(symbol) != 0; }
     int  frame_count(const std::string& symbol) const;

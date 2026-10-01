@@ -6,6 +6,10 @@
 #include "log.h"
 #include "swf.h"
 
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#include "stb_image.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -13,6 +17,7 @@
 #include <GL/gl.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -23,6 +28,7 @@ namespace cr {
 namespace {
 
 struct Img {
+    int kind = 0;            // 0 swf symbol, 1 ui.swf bitmap id, 2 png in the archive
     Swf swf;
     std::string symbol;
     int frame, px;
@@ -39,6 +45,8 @@ struct State {
 
     std::unordered_map<std::string, TextKeys> items, abilities, passives, classes, keywords;
     std::unordered_map<std::string, std::string> portrait_by_name;
+    std::unordered_map<std::string, std::pair<float, float>> hotspots;
+    std::shared_ptr<SwfFont> body_font, title_font;
 
     std::mutex mu;
     std::condition_variable cv;
@@ -66,7 +74,7 @@ void load_gon_dir(const char* prefix, void (*fn)(const Gon& entry)) {
 
 void build_maps() {
     load_gon_dir("data/items/", [](const Gon& e) {
-        TextKeys k{e.str("name"), e.str("desc"), {}};
+        TextKeys k{e.str("name"), e.str("desc"), {}, e.str("ability")};
         if (!k.name.empty()) g.items[e.key] = k;
     });
     load_gon_dir("data/passives/", [](const Gon& e) {
@@ -100,6 +108,12 @@ void build_maps() {
     });
 
     std::vector<uint8_t> buf;
+    if (g.gpak.read("textures/cursor/hotspots.gon", buf)) {
+        Gon root = gon_parse((const char*)buf.data(), buf.size());
+        for (const Gon& e : root.kids)
+            if (e.is_arr && e.kids.size() >= 2)
+                g.hotspots[e.key] = {(float)atof(e.kids[0].value.c_str()), (float)atof(e.kids[1].value.c_str())};
+    }
     if (g.gpak.read("data/keyword_tooltips.gon", buf)) {
         Gon root = gon_parse((const char*)buf.data(), buf.size());
         std::unordered_map<std::string, std::string> alias;
@@ -143,6 +157,14 @@ void worker_body(const std::string& game_dir) {
     bool ui_ok = g.gpak.read("swfs/ui.swf", buf) && g.ui.load(std::move(buf));
     bool pt_ok = g.gpak.read("swfs/portraits.swf", buf) && g.portraits.load(std::move(buf));
     build_maps();
+    {
+        SwfDoc intl;   // 86 MB; keep only the two fonts we use
+        if (g.gpak.read("swfs/international_fonts.swf", buf) && intl.load(std::move(buf))) {
+            g.body_font = intl.font("TikaFontIntl");
+            g.title_font = intl.font("Mewgenics Organ Grinder Cyr");
+        }
+        log_line("assets: fonts body=%s title=%s", g.body_font ? "ok" : "MISSING", g.title_font ? "ok" : "MISSING");
+    }
     log_line("assets: ui.swf %s, portraits.swf %s; %zu items, %zu abilities, %zu passives, %zu classes, "
              "%zu keywords, %zu portraits",
              ui_ok ? "ok" : "FAILED", pt_ok ? "ok" : "FAILED", g.items.size(), g.abilities.size(),
@@ -159,14 +181,28 @@ void worker_body(const std::string& game_dir) {
             g.queue.pop_front();
             auto it = g.imgs.find(key);
             if (it == g.imgs.end()) continue;
-            job.swf = it->second.swf; job.symbol = it->second.symbol;
+            job.kind = it->second.kind; job.swf = it->second.swf; job.symbol = it->second.symbol;
             job.frame = it->second.frame; job.px = it->second.px;
         }
-        const SwfDoc& doc = job.swf == Swf::Ui ? g.ui : g.portraits;
         SwfImage im;
         bool ok = false;
         try {
-            ok = doc.render(job.symbol, job.frame, job.px, im);
+            if (job.kind == 0) {
+                const SwfDoc& doc = job.swf == Swf::Ui ? g.ui : g.portraits;
+                ok = doc.render(job.symbol, job.frame, job.px, im);
+            } else if (job.kind == 1) {
+                ok = g.ui.bitmap((uint16_t)job.frame, im);
+            } else {
+                std::vector<uint8_t> png;
+                int w = 0, h = 0, n = 0;
+                if (g.gpak.read(job.symbol, png)) {
+                    if (uint8_t* px = stbi_load_from_memory(png.data(), (int)png.size(), &w, &h, &n, 4)) {
+                        im.w = w; im.h = h; im.rgba.assign(px, px + (size_t)w * h * 4);
+                        stbi_image_free(px);
+                        ok = true;
+                    }
+                }
+            }
         } catch (...) {
             ok = false;
         }
@@ -192,15 +228,34 @@ bool asset_has(Swf swf, const std::string& symbol) {
     return (swf == Swf::Ui ? g.ui : g.portraits).has(symbol);
 }
 
-Tex asset_image(Swf swf, const std::string& symbol, int frame, int px) {
+namespace {
+Tex request(int kind, Swf swf, const std::string& symbol, int frame, int px);
+}
+
+Tex asset_image(Swf swf, const std::string& symbol, int frame, int px) { return request(0, swf, symbol, frame, px); }
+Tex asset_bitmap(int id) { return request(1, Swf::Ui, "#bitmap", id, 0); }
+Tex asset_png(const std::string& path) { return request(2, Swf::Ui, path, 0, 0); }
+
+void cursor_hotspot(const std::string& state, float& x, float& y) {
+    auto it = g.hotspots.find(state);
+    if (it == g.hotspots.end()) it = g.hotspots.find("default");
+    if (it != g.hotspots.end()) { x = it->second.first; y = it->second.second; }
+    else { x = 34; y = 7; }
+}
+
+std::shared_ptr<SwfFont> font_body() { return g.ready ? g.body_font : nullptr; }
+std::shared_ptr<SwfFont> font_title() { return g.ready ? g.title_font : nullptr; }
+
+namespace {
+Tex request(int kind, Swf swf, const std::string& symbol, int frame, int px) {
     Tex t;
     if (!g.ready || symbol.empty()) return t;
-    std::string key = img_key(swf, symbol, frame, px);
+    std::string key = std::to_string(kind) + "|" + img_key(swf, symbol, frame, px);
     std::lock_guard<std::mutex> lk(g.mu);
     auto it = g.imgs.find(key);
     if (it == g.imgs.end()) {
         Img im;
-        im.swf = swf; im.symbol = symbol; im.frame = frame; im.px = px;
+        im.kind = kind; im.swf = swf; im.symbol = symbol; im.frame = frame; im.px = px;
         g.imgs.emplace(key, std::move(im));
         g.queue.push_back(key);
         g.cv.notify_one();
@@ -213,6 +268,7 @@ Tex asset_image(Swf swf, const std::string& symbol, int frame, int px) {
     }
     return t;
 }
+}  // namespace
 
 void assets_upload_pending() {
     std::lock_guard<std::mutex> lk(g.mu);

@@ -22,11 +22,15 @@ int main(int argc, char** argv) {
     printf("loaded in %.0f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
     for (int i = 4; i < argc; ++i) {
         std::string arg = argv[i], sym = arg;
-        int frame = 0;
-        if (auto c = arg.find(':'); c != std::string::npos) { sym = arg.substr(0, c); frame = atoi(arg.c_str() + c + 1); }
+        int frame = 0, size = 128;
+        if (auto c = arg.find(':'); c != std::string::npos) {
+            sym = arg.substr(0, c);
+            frame = atoi(arg.c_str() + c + 1);
+            if (auto c2 = arg.find(':', c + 1); c2 != std::string::npos) size = atoi(arg.c_str() + c2 + 1);
+        }
         cr::SwfImage im;
         auto t = std::chrono::steady_clock::now();
-        bool ok = doc.render(sym, frame, 128, im);
+        bool ok = doc.render(sym, frame, size, im);
         double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
         printf("%s frame %d: %s %dx%d %.1f ms (frames=%d)\n", sym.c_str(), frame, ok ? "ok" : "FAIL", im.w, im.h, ms, doc.frame_count(sym));
         if (ok) {
