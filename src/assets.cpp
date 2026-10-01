@@ -124,7 +124,19 @@ void build_maps() {
 
 // --- worker ---------------------------------------------------------------------
 
+void worker_body(const std::string& game_dir);
+
+// An exception escaping a std::thread calls std::terminate and would take the
+// game down with it; the worker must never let one out.
 void worker_main(std::string game_dir) {
+    try {
+        worker_body(game_dir);
+    } catch (...) {
+        log_line("!! assets worker stopped by an exception");
+    }
+}
+
+void worker_body(const std::string& game_dir) {
     std::string path = game_dir + "\\resources.gpak";
     if (!g.gpak.open(path)) { log_line("!! assets: cannot open %s", path.c_str()); return; }
     std::vector<uint8_t> buf;
@@ -152,7 +164,12 @@ void worker_main(std::string game_dir) {
         }
         const SwfDoc& doc = job.swf == Swf::Ui ? g.ui : g.portraits;
         SwfImage im;
-        bool ok = doc.render(job.symbol, job.frame, job.px, im);
+        bool ok = false;
+        try {
+            ok = doc.render(job.symbol, job.frame, job.px, im);
+        } catch (...) {
+            ok = false;
+        }
         std::lock_guard<std::mutex> lk(g.mu);
         Img& dst = g.imgs[key];
         if (ok) { dst.pixels = std::move(im); dst.state = 1; }
