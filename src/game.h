@@ -77,7 +77,13 @@ constexpr uintptr_t Ch_Attack     = 0xD8;  // Ability*
 constexpr uintptr_t Ch_Bonus      = 0xE0;  // Ability*
 constexpr uintptr_t Ch_Team       = 0x350; // i16, current team [CR]
 constexpr uintptr_t Ch_TeamOrig   = 0x358; // i16, original team [CR]
-constexpr uintptr_t Ch_Kind       = 0xCF4; // i32: 2 boss, 4 object [CR]
+constexpr uintptr_t Ch_Kind       = 0xCF4; // i32: 2 boss, 3 cat, 4 object [CR]
+constexpr uintptr_t Ch_NameKey    = 0x248; // std::string loc key, e.g. ENEMY_X_NAME [CR]
+constexpr uintptr_t Ch_DescKey    = 0x268; // std::string loc key [CR]
+constexpr uintptr_t Ch_DisplayName= 0x290; // std::wstring, final localised name (refresh_name) [CR]
+constexpr uintptr_t Ch_Class      = 0x2B0; // std::string: cat class ("Medic") or "Boss"/"Enemy" [CR]
+constexpr uintptr_t Ch_Mana       = 0xD18; // i32 [CR] (verified live on 6 units)
+constexpr uintptr_t Ch_MaxMana    = 0xD1C; // i32 [CR]
 constexpr uintptr_t Ch_SpellCount = 0xEC;  // u32
 constexpr uintptr_t Ch_SpellData  = 0xF0;  // Ability**
 constexpr uintptr_t Ch_HP         = 0x4B0; // i32
@@ -99,6 +105,11 @@ constexpr uintptr_t Ch_PassData   = 0xE78;
 // Ability
 constexpr uintptr_t Ab_Def        = 0x28;  // -> definition; +0x88 = std::string GON name
 constexpr uintptr_t Def_Name      = 0x88;
+// Ability cost block (Ability GON parser sub_14002B3B0) [CR]
+constexpr uintptr_t Ab_ManaCost   = 0x4C;
+constexpr uintptr_t Ab_Charge     = 0x50;
+constexpr uintptr_t Ab_UsesPerFight = 0x64;
+constexpr uintptr_t Pass_Stacks   = 0x5C;  // [CR] Passive stack count (Trample 3 / BoostHeals 2 / Metal 1 matched GON live)
 
 // CatData (p0lymeric/mewgenics_analysis glaiel_cat.hpp, sizeof 0xC58; field
 // offsets cross-checked against cat-bridge: libido 0xBB8, aggression 0xBE8,

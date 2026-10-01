@@ -14,6 +14,7 @@
 
 #include "game.h"
 #include "log.h"
+#include "assets.h"
 #include "panel.h"
 #include "roster.h"
 
@@ -22,6 +23,8 @@
 #endif
 #include <windows.h>
 #include <GL/gl.h>
+
+#include <string>
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -67,6 +70,8 @@ struct State {
 
     Roster   roster;
     PanelState panel;
+    std::string game_dir;
+    bool     icons_ok = false;
 } g;
 
 // --- window / input --------------------------------------------------------------
@@ -107,7 +112,7 @@ void load_fonts() {
     GetWindowsDirectoryA(path, MAX_PATH);
     strcat_s(path, "\\Fonts\\segoeui.ttf");
     if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
-        io.Fonts->AddFontFromFileTTF(path, 17.0f);
+        io.Fonts->AddFontFromFileTTF(path, 18.0f);
     else
         io.Fonts->AddFontDefault();
 }
@@ -166,6 +171,7 @@ bool ensure_gl() {
             tex->SetStatus(ImTextureStatus_WantCreate);
         }
         g.gl_ok = false;
+        assets_gl_lost();
     }
     g.bind_fb  = (fn_glBindFramebuffer)wglGetProcAddress("glBindFramebuffer");
     g.bind_buf = (fn_glBindBuffer)wglGetProcAddress("glBindBuffer");
@@ -196,6 +202,9 @@ void render_frame() {
     if (dt <= 0.0f || dt > 0.25f) dt = 1.0f / 60.0f;
 
     bool in_battle = battle_active();
+    if (!g.panel.loaded) panel_load(g.panel, g.game_dir);
+    if (in_battle && !g.icons_ok && assets_ready()) g.icons_ok = status_icons_init();
+    assets_upload_pending();
     if (in_battle) roster_build(g.roster);
     else g.roster.valid = false;
 
@@ -279,6 +288,8 @@ bool points_to_default_stub(const uint8_t* fn) {
     return false;
 }
 }  // namespace
+
+void overlay_set_game_dir(const char* dir) { g.game_dir = dir; }
 
 void overlay_prepare() {
     g.slot = (void**)(g_base + kRva_SwapSlot);

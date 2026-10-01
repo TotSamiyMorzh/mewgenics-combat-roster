@@ -79,3 +79,28 @@ Native DLL mod loaded by **Mewjector** (version.dll proxy, MIT, community standa
   ImGui up on the SDL window, no crash. The DYNAPI table was ALREADY live at DllMain (slot held the
   real swap @ rva 0xBE94C0, default stub is @ 0xB9C5D0 and ends `48 FF 25 -> slot`), so install
   detects the stub by its self-reference instead of waiting for the value to change.
+- 2026-10-02: first in-battle test by the user: panel works. CatData = `Character+0x88` (discovery log).
+  Feedback: move panel lower / make it draggable; native look (frames, icons, portraits); Zaratana shown
+  as "Character"; Russian names/descriptions.
+- 2026-10-02: live RE via ReadProcessMemory (`~/mewgenics-re/live.py`, read-only) on the running battle:
+  | What | Where |
+  |---|---|
+  | name loc key / desc key | `Character+0x248` / `+0x268` std::string (e.g. ENEMY_ZARATANAFRIENDLY_NAME) |
+  | final localised display name | `Character+0x290` std::wstring (written by refresh_name `sub_14011C560`) |
+  | class | `Character+0x2B0` std::string: "Medic"/"Butcher"... for cats, "Boss"/"Enemy"/"Object" otherwise |
+  | mana / max mana | `Character+0xD18` / `+0xD1C` i32 (10/30, 7/21, 5/100 Zaratana, 5/15 worm -- all match HUD/GON) |
+  | sizeof(Character) | 0xEE0 (list stride) |
+  | Passive stack count | `Passive+0x5C` (Trample 3, BoostHeals 2, Metal 1 = GON values) |
+  | ability cost block | `Ability+0x40` move_points, `+0x44` act_points, `+0x48` health, `+0x4C` mana, `+0x50` charge, `+0x54` prime, `+0x58` coins, `+0x5C` durability, `+0x64` uses_per_fight |
+  | StringsDatabase | global (data RVA 0x13C5530), `lea r15` in refresh_name; lookup `sub_1409616D0(db, wstring* out, const string* key, bool)`; language string at db+0x40 |
+  | status icon table | `unordered_map<string, StatusIconInfo>` (data RVA 0x13C48B0), `lea rcx` in `get_status_icon` `sub_1404933E0`; node: key @+0x10, info @+0x30 = {frame_pos, frame_neg, ...}; frames are 1-based into ui.swf `StatusIcon` (1015 frames); -1 = no icon |
+  No mid-battle cooldowns exist; abilities have mana cost, `charge` and `uses_per_fight`.
+- 2026-10-02: assets: the UI is Flash. `resources.gpak` has `swfs/ui.swf` (FWS, 46 MB, 432 exports incl.
+  StatusIcon, HealthIcon, ManaIcon, FontIcon_<stat>, TurnOrderPortrait*, CharacterTooltip) and
+  `swfs/portraits.swf` (730 `<Movieclip>Portrait` clips). Wrote a SWF vector rasteriser (src/swf.cpp; proven
+  first in Python, ~1-18 ms per clip in C++). Character portrait = GON `graphics.portrait` or
+  `graphics.movieclip + "Portrait"`, keyed by `graphics.name` (== Character+0x248). Cats: their in-game
+  portrait is a runtime composite of catparts + palette -> v0.2 uses `<Class>CatPortrait` instead.
+- 2026-10-02: localisation: `data/text/combined.csv` has ru; we use the game's own StringsDatabase instead
+  (language follows the game). id -> key maps from GON: items `name/desc`, abilities `meta.name/desc`
+  (+variant_of), passives `name/desc`, classes `meta.name`, statuses keyword_tooltips.gon (+alias).

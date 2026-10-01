@@ -97,7 +97,6 @@ const void* cat_of(const void* ch) {
 
 void read_cat(const void* cat, UnitInfo& u) {
     u.has_cat = true;
-    read_wstring((const uint8_t*)cat + off::Cat_Name, u.name, sizeof(u.name));
     int32_t a[7] = {}, b[7] = {}, c[7] = {};
     rd(cat, off::Cat_StatsBase, a);
     rd(cat, off::Cat_StatsLvl, b);
@@ -120,42 +119,21 @@ void read_cat(const void* cat, UnitInfo& u) {
 // --- statuses -----------------------------------------------------------------------
 //
 // Every status (Bleed, Poison, DodgeChance_Status, ...) is a glaiel::Passive
-// subclass whose RTTI class name is the same key keyword_tooltips.gon uses, so
-// the class name IS the status name. Stack count: see MODLOG (not yet known).
+// subclass whose RTTI class name is the key keyword_tooltips.gon and the game's
+// status-icon table use, so the class name IS the status id. [CR] Stack count is
+// Passive+0x5C (Trample 3 / BoostHeals 2 / Metal 1 matched their GON values live).
 
-// "DodgeChance_Status" -> "Dodge Chance"
-void pretty(const char* in, char* out, size_t n) {
-    size_t o = 0;
-    for (size_t i = 0; in[i] && o + 2 < n; ++i) {
-        char c = in[i];
-        if (c == '_') {
-            if (!strcmp(in + i, "_Status")) break;
-            c = ' ';
-        } else if (i > 0 && c >= 'A' && c <= 'Z' && in[i - 1] >= 'a' && in[i - 1] <= 'z') {
-            out[o++] = ' ';
-        }
-        out[o++] = c;
-    }
-    out[o] = 0;
-}
-
-bool g_dumped = false;   // one diagnostic dump per session
+bool g_dumped = false;   // one diagnostic dump per session (verifies stacks)
 
 void dump_passives(const void* ch) {
     uint32_t n = rdv<uint32_t>(ch, off::Ch_PassCount);
     const void* data = rdp(ch, off::Ch_PassData);
-    log_line("dump: Character %p team=%d kind=%d passives=%u", ch, rdv<int16_t>(ch, off::Ch_Team),
-             rdv<int32_t>(ch, off::Ch_Kind), n);
+    log_line("dump: Character %p passives=%u", ch, n);
     for (uint32_t i = 0; i < n && i < 32; ++i) {
         const void* p = rdp(data, i * sizeof(void*));
         char cls[96];
         rtti_name(p, cls, sizeof(cls));
-        int32_t raw[32] = {};
-        read_bytes(p, raw, sizeof(raw));
-        char hex[400];
-        size_t at = 0;
-        for (int k = 0; k < 32; ++k) at += sprintf_s(hex + at, sizeof(hex) - at, "%X ", raw[k]);
-        log_line("  [%u] %s passive=%d | %s", i, cls, rtti_is_a(p, "Passive@glaiel") ? 1 : 0, hex);
+        log_line("  [%u] %s stacks=%d @40=%d", i, cls, rdv<int32_t>(p, off::Pass_Stacks), rdv<int32_t>(p, 0x40));
     }
 }
 
@@ -166,21 +144,23 @@ void read_statuses(const void* ch, UnitInfo& u) {
     for (uint32_t i = 0; i < n && u.n_statuses < kMaxStatuses; ++i) {
         const void* p = rdp(data, i * sizeof(void*));
         if (!p) continue;
-        char cls[96], shortname[64];
+        char cls[96];
         rtti_name(p, cls, sizeof(cls));
         if (cls[0] == '?') continue;
-        strip_ns(cls, shortname, sizeof(shortname));
         StatusInfo& s = u.statuses[u.n_statuses++];
-        pretty(shortname, s.name, sizeof(s.name));
-        s.stacks = -1;
+        strip_ns(cls, s.id, sizeof(s.id));
+        s.stacks = rdv<int32_t>(p, off::Pass_Stacks);
     }
 }
 
-void read_ability(const void* ab, AbilityInfo& out) {
-    out.name[0] = 0;
-    out.cooldown = -1;
+bool read_ability(const void* ab, AbilityInfo& out) {
+    out = AbilityInfo{};
     const void* def = rdp(ab, off::Ab_Def);
-    read_string((const uint8_t*)def + off::Def_Name, out.name, sizeof(out.name));
+    if (!read_string((const uint8_t*)def + off::Def_Name, out.id, sizeof(out.id)) || !out.id[0]) return false;
+    out.mana_cost      = rdv<int32_t>(ab, off::Ab_ManaCost);
+    out.charge         = rdv<int32_t>(ab, off::Ab_Charge);
+    out.uses_per_fight = rdv<int32_t>(ab, off::Ab_UsesPerFight);
+    return true;
 }
 
 void read_unit(const void* ch, UnitInfo& u) {
@@ -198,9 +178,13 @@ void read_unit(const void* ch, UnitInfo& u) {
     u.on_board = tile[0] != off::OffBoard;
     u.is_current = rdp(g_tc, off::TC_CurActor) == ch;
 
-    char cls[96];
-    rtti_name(ch, cls, sizeof(cls));
-    strip_ns(cls, u.cls, sizeof(u.cls));
+    u.kind = rdv<int32_t>(ch, off::Ch_Kind);
+    rd(ch, off::Ch_Mana, u.mana);
+    rd(ch, off::Ch_MaxMana, u.max_mana);
+    read_wstring((const uint8_t*)ch + off::Ch_DisplayName, u.name, sizeof(u.name));
+    read_string((const uint8_t*)ch + off::Ch_NameKey, u.name_key, sizeof(u.name_key));
+    read_string((const uint8_t*)ch + off::Ch_DescKey, u.desc_key, sizeof(u.desc_key));
+    read_string((const uint8_t*)ch + off::Ch_Class, u.cls, sizeof(u.cls));
 
     if (g_cat_off == -1 && g_cat_misses < 8) {
         discover_cat_offset(ch);
@@ -211,14 +195,14 @@ void read_unit(const void* ch, UnitInfo& u) {
     if (!g_dumped) { g_dumped = true; dump_passives(ch); }
     read_statuses(ch, u);
 
-    // Spells (the authored spellN slots), then attack.
+    // Basic attack, then the authored spellN slots.
+    if (const void* atk = rdp(ch, off::Ch_Attack))
+        if (read_ability(atk, u.abilities[u.n_abilities])) ++u.n_abilities;
     uint32_t n = rdv<uint32_t>(ch, off::Ch_SpellCount);
     const void* data = rdp(ch, off::Ch_SpellData);
     for (uint32_t i = 0; i < n && i < 16 && u.n_abilities < kMaxAbilities; ++i) {
         const void* ab = rdp(data, i * sizeof(void*));
-        if (!ab) continue;
-        read_ability(ab, u.abilities[u.n_abilities]);
-        if (u.abilities[u.n_abilities].name[0]) ++u.n_abilities;
+        if (ab && read_ability(ab, u.abilities[u.n_abilities])) ++u.n_abilities;
     }
 }
 
@@ -244,7 +228,6 @@ void roster_invalidate() {
 bool roster_build(Roster& out) {
     out.valid = false;
     out.n = 0;
-    out.total_listed = 0;
     g_member_count = 0;
     if (!g_tc) return false;
 
@@ -257,7 +240,6 @@ bool roster_build(Roster& out) {
         const void* ch = rdp(data, i * sizeof(void*));
         if (!ch || !linked(ch)) continue;
         g_members[g_member_count++] = ch;
-        ++out.total_listed;
 
         bool dead = rdv<bool>(ch, off::Ch_Dead, true);
         int hp = rdv<int>(ch, off::Ch_HP);

@@ -3,7 +3,9 @@
 // Loaded by Mewjector (version.dll proxy) from <game>/mods/ during process
 // attach, before the game's main thread runs. All we do here is resolve
 // addresses and install hooks; everything else happens on the game thread.
+#include "assets.h"
 #include "game.h"
+#include "loc.h"
 #include "log.h"
 #include "mewjector.h"
 #include "overlay.h"
@@ -34,7 +36,7 @@ void init() {
     GetModuleFileNameA(nullptr, exe, MAX_PATH);
     if (char* slash = strrchr(exe, '\\')) *slash = 0;
     cr::log_open(exe);
-    cr::log_line("Combat Roster Panel v0.1 -- base %p", (void*)cr::g_base);
+    cr::log_line("Combat Roster Panel v0.2 -- base %p", (void*)cr::g_base);
 
     auto dos = (const IMAGE_DOS_HEADER*)cr::g_base;
     auto nt  = (const IMAGE_NT_HEADERS64*)(cr::g_base + dos->e_lfanew);
@@ -49,7 +51,10 @@ void init() {
         return;
     }
 
+    cr::overlay_set_game_dir(exe);
     cr::overlay_prepare();
+    cr::loc_init();
+    cr::assets_start(exe);
     if (!cr::hooks_install(g_mj)) {
         cr::log_line("!! hooks incomplete -- mod is inactive");
         return;

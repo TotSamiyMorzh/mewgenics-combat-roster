@@ -9,7 +9,12 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(IMGUI ${CMAKE_SOURCE_DIR}/third_party/imgui)
 
 add_library(combat_roster SHARED
+    src/assets.cpp
     src/dllmain.cpp
+    src/gon.cpp
+    src/gpak.cpp
+    src/loc.cpp
+    src/swf.cpp
     src/game.cpp
     src/hooks.cpp
     src/log.cpp
@@ -40,3 +45,11 @@ target_compile_definitions(combat_roster PRIVATE
 string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 target_compile_options(combat_roster PRIVATE /EHa /W3 /utf-8)
 target_link_libraries(combat_roster PRIVATE opengl32 user32)
+
+# Offline test tool for the SWF rasteriser (not part of the mod).
+add_executable(swf_test tools/swf_test.cpp src/gpak.cpp src/swf.cpp)
+target_include_directories(swf_test PRIVATE src third_party)
+target_compile_options(swf_test PRIVATE /utf-8 /EHsc /O2)
+add_executable(gon_test tools/gon_test.cpp src/gpak.cpp src/gon.cpp)
+target_include_directories(gon_test PRIVATE src)
+target_compile_options(gon_test PRIVATE /utf-8 /EHsc /O2)
