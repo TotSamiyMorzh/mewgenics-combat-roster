@@ -82,6 +82,12 @@ void __fastcall h_next_turn(void* self) {
 
 void __fastcall h_status_menu(void* self) {
     o_status_menu(self);
+    static int logged = 0;
+    uint64_t gap = g_frame - g_sm_frame;
+    if (g_sm_frame && gap > 2 && gap <= 30 && logged < 5) {
+        ++logged;
+        log_line("hud: battle HUD skipped %llu frames (tolerated)", (unsigned long long)(gap - 1));
+    }
     g_sm_frame = g_frame;
     __try {
         submit_highlight(self);
@@ -108,7 +114,11 @@ bool hook(MewjectorAPI& mj, const Sig& sig, void* fn, fn_void* orig) {
 
 }  // namespace
 
-bool battle_active() { return g_sm_frame != 0 && g_frame - g_sm_frame <= 2 && roster_turn_control(); }
+// The battle HUD does not tick on every single frame (it skips some, e.g. while
+// the pointer is parked off-window over our panel). A short gap is not the end
+// of a battle; treating it as one made the panel blink. 20 frames ~ 1/3 s.
+constexpr uint64_t kHudGapFrames = 20;
+bool battle_active() { return g_sm_frame != 0 && g_frame - g_sm_frame <= kHudGapFrames && roster_turn_control(); }
 
 void set_hover_unit(const void* ch) { g_hover = ch; }
 
