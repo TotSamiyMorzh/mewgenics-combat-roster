@@ -201,6 +201,8 @@ std::string ability_name(const AbilityInfo& a, const UnitInfo& u) {
     return {};   // internal ability with no name in the game either: not shown
 }
 
+void wrapped_dim(const std::string& t);
+
 // --- icons for list entries --------------------------------------------------------------
 
 struct Icon { Swf swf; std::string sym; int frame = -1; };
@@ -234,18 +236,28 @@ Icon ability_icon(const AbilityInfo& a, const UnitInfo& u) {
 
 Icon passive_icon(const char* id) { return labelled("PassiveIcon", id); }
 
-// An icon-led line: the icon replaces the bullet, text is centred on it.
-void icon_line(const Icon& ic, const std::string& text, float s) {
-    float fs = ImGui::GetFontSize(), sz = fs * 1.45f;
-    float y0 = ImGui::GetCursorPosY();
+// An icon-led entry: a big icon on the left, the name and (optional)
+// description in a column beside it, both vertically centred on the icon.
+void icon_entry(const Icon& ic, const std::string& name, const std::string& desc, float s) {
+    float fs = ImGui::GetFontSize(), sz = fs * 2.3f;
     ImVec2 p = ImGui::GetCursorScreenPos();
+    float y0 = ImGui::GetCursorPosY();
     ImGui::Dummy(ImVec2(sz, sz));
-    if (ic.frame >= 0) image_fit(ImGui::GetWindowDrawList(), ic.swf, ic.sym, ic.frame, p, ImVec2(p.x + sz, p.y + sz), 64);
-    else ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + sz * 0.5f, p.y + sz * 0.5f), 2.5f * s, kInk);
-    ImGui::SameLine(0, 6 * s);
-    ImGui::SetCursorPosY(y0 + (sz - fs) * 0.5f);
-    ImGui::TextUnformatted(text.c_str());
+    if (ic.frame >= 0) image_fit(ImGui::GetWindowDrawList(), ic.swf, ic.sym, ic.frame, p, ImVec2(p.x + sz, p.y + sz), 96);
+    else ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + sz * 0.5f, p.y + sz * 0.5f), 3.0f * s, kInk);
+    ImGui::SameLine(0, 8 * s);
+    // Measure the text block to centre it on the icon when it is shorter.
+    float wrap = ImGui::GetContentRegionAvail().x;
+    float th = fs;
+    if (!desc.empty()) th += ImGui::GetStyle().ItemSpacing.y + ImGui::CalcTextSize(desc.c_str(), nullptr, false, wrap).y;
+    ImGui::SetCursorPosY(y0 + std::fmax(0.0f, (sz - th) * 0.5f));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted(name.c_str());
+    wrapped_dim(desc);
+    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0, 2 * s));
 }
+void icon_line(const Icon& ic, const std::string& text, float s) { icon_entry(ic, text, {}, s); }
 
 std::string status_desc(const StatusInfo& s) {
     const TextKeys* k = keys_keyword(s.id);
@@ -365,24 +377,16 @@ void unit_tooltip(const UnitInfo& u, float s) {
                 for (int slot = 0; slot < 5; ++slot) {
                     const char* e = u.equip[slot];
                     if (!e[0]) continue;
-                    icon_line(item_icon(slot, e), item_name(e), s);
-                    if (const TextKeys* k = keys_item(e)) {
-                        ImGui::Indent(ImGui::GetFontSize());
-                        wrapped_dim(tr(k->desc));
-                        ImGui::Unindent(ImGui::GetFontSize());
-                    }
+                    const TextKeys* k = keys_item(e);
+                    icon_entry(item_icon(slot, e), item_name(e), k ? tr(k->desc) : std::string(), s);
                 }
             }
             if (u.passives[0][0] || u.passives[1][0]) {
                 section(w.passives, seed + ++sec, s);
                 for (auto& p : u.passives) {
                     if (!p[0]) continue;
-                    icon_line(passive_icon(p), passive_name(p), s);
-                    if (const TextKeys* k = keys_passive(p)) {
-                        ImGui::Indent(ImGui::GetFontSize());
-                        wrapped_dim(tr(k->desc));
-                        ImGui::Unindent(ImGui::GetFontSize());
-                    }
+                    const TextKeys* k = keys_passive(p);
+                    icon_entry(passive_icon(p), passive_name(p), k ? tr(k->desc) : std::string(), s);
                 }
             }
             if (u.mutations[0][0] || u.mutations[1][0]) {
@@ -418,13 +422,9 @@ void unit_tooltip(const UnitInfo& u, float s) {
             for (int i = 0; i < u.n_statuses; ++i) {
                 const StatusInfo& st = u.statuses[i];
                 if (!visible_status(st)) continue;
-                icon_inline(Swf::Ui, "StatusIcon", status_icon_frame(st.id, st.stacks < 0), icon);
-                ImGui::SameLine();
-                ImGui::BeginGroup();
-                if (st.stacks > 1 || st.stacks < 0) ImGui::Text("%s  x%d", status_name(st.id).c_str(), st.stacks);
-                else ImGui::TextUnformatted(status_name(st.id).c_str());
-                wrapped_dim(status_desc(st));
-                ImGui::EndGroup();
+                std::string nm = status_name(st.id);
+                if (st.stacks > 1 || st.stacks < 0) nm += "  x" + std::to_string(st.stacks);
+                icon_entry(Icon{Swf::Ui, "StatusIcon", status_icon_frame(st.id, st.stacks < 0)}, nm, status_desc(st), s);
             }
         }
         if (!u.on_board) wrapped_dim(std::string("(") + w.off_board + ")");
