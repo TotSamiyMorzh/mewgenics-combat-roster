@@ -46,13 +46,15 @@ constexpr float kMaxHeight   = 0.66f;  // of the display height; the list scroll
 // --- the mod's own UI words (everything else comes from the game) -------------
 struct Words {
     const char *party, *stats, *equip, *abilities, *passives, *mutations, *statuses, *charge, *per_fight,
-        *off_board, *hide, *show, *drag, *opacity, *level;
+        *off_board, *hide, *show, *drag, *opacity, *level, *resize;
 };
 const Words kRu = {"Отряд", "Характеристики", "Снаряжение", "Способности", "Пассивки", "Мутации", "Эффекты",
                    "зарядка", "за бой", "вне поля", "Спрятать отряд", "Показать отряд",
-                   "Тяни, чтобы подвинуть", "Прозрачность", "ур."};
+                   "Тяни, чтобы подвинуть", "Прозрачность", "ур.",
+                   "Тяни, чтобы изменить высоту (двойной клик — авто)"};
 const Words kEn = {"Party", "Stats", "Equipment", "Abilities", "Passives", "Mutations", "Effects", "charge",
-                   "per fight", "off the board", "Hide party", "Show party", "Drag to move", "Opacity", "Lv"};
+                   "per fight", "off the board", "Hide party", "Show party", "Drag to move", "Opacity", "Lv",
+                   "Drag to resize (double-click: auto)"};
 const Words& W() {
     static std::string lang = loc_lang();
     return lang.rfind("ru", 0) == 0 ? kRu : kEn;
@@ -196,9 +198,53 @@ std::string ability_name(const AbilityInfo& a, const UnitInfo& u) {
         const TextKeys* ik = e[0] ? keys_item(e) : nullptr;
         if (ik && ik->ability == a.id) return item_name(e);
     }
-    const char* id = a.id;
-    if (strlen(id) > 3 && id[2] == '_') id += 3;   // wp_, tk_, hd_ ...
-    return id;
+    return {};   // internal ability with no name in the game either: not shown
+}
+
+// --- icons for list entries --------------------------------------------------------------
+
+struct Icon { Swf swf; std::string sym; int frame = -1; };
+
+const char* kSlotIcon[5] = {"HeadItemIcon", "FaceItemIcon", "NeckItemIcon", "WeaponIcon", "TrinketIcon"};
+
+Icon item_icon(int slot, const char* id) {
+    const TextKeys* k = keys_item(id);
+    if (!k || k->frame <= 0 || slot < 0 || slot > 4) return {};
+    return {Swf::CatParts, kSlotIcon[slot], k->frame - 1};
+}
+
+Icon labelled(const char* sym, const char* id) {
+    int f = asset_frame_of_label(Swf::AbilityIcons, sym, id);
+    return f >= 0 ? Icon{Swf::AbilityIcons, sym, f} : Icon{};
+}
+
+Icon ability_icon(const AbilityInfo& a, const UnitInfo& u) {
+    Icon ic = labelled("AbilityIcon", a.id);
+    if (ic.frame >= 0) return ic;
+    if (const TextKeys* k = keys_ability(a.id); k && !k->base.empty()) {
+        ic = labelled("AbilityIcon", k->base.c_str());
+        if (ic.frame >= 0) return ic;
+    }
+    for (int i = 0; i < 5; ++i) {   // item abilities show their item
+        const TextKeys* ik = u.equip[i][0] ? keys_item(u.equip[i]) : nullptr;
+        if (ik && ik->ability == a.id) return item_icon(i, u.equip[i]);
+    }
+    return {};
+}
+
+Icon passive_icon(const char* id) { return labelled("PassiveIcon", id); }
+
+// An icon-led line: the icon replaces the bullet, text is centred on it.
+void icon_line(const Icon& ic, const std::string& text, float s) {
+    float fs = ImGui::GetFontSize(), sz = fs * 1.45f;
+    float y0 = ImGui::GetCursorPosY();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(sz, sz));
+    if (ic.frame >= 0) image_fit(ImGui::GetWindowDrawList(), ic.swf, ic.sym, ic.frame, p, ImVec2(p.x + sz, p.y + sz), 64);
+    else ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + sz * 0.5f, p.y + sz * 0.5f), 2.5f * s, kInk);
+    ImGui::SameLine(0, 6 * s);
+    ImGui::SetCursorPosY(y0 + (sz - fs) * 0.5f);
+    ImGui::TextUnformatted(text.c_str());
 }
 
 std::string status_desc(const StatusInfo& s) {
@@ -316,9 +362,10 @@ void unit_tooltip(const UnitInfo& u, float s) {
             for (auto& e : u.equip) any |= e[0] != 0;
             if (any) {
                 section(w.equip, seed + ++sec, s);
-                for (auto& e : u.equip) {
+                for (int slot = 0; slot < 5; ++slot) {
+                    const char* e = u.equip[slot];
                     if (!e[0]) continue;
-                    ImGui::BulletText("%s", item_name(e).c_str());
+                    icon_line(item_icon(slot, e), item_name(e), s);
                     if (const TextKeys* k = keys_item(e)) {
                         ImGui::Indent(ImGui::GetFontSize());
                         wrapped_dim(tr(k->desc));
@@ -330,7 +377,7 @@ void unit_tooltip(const UnitInfo& u, float s) {
                 section(w.passives, seed + ++sec, s);
                 for (auto& p : u.passives) {
                     if (!p[0]) continue;
-                    ImGui::BulletText("%s", passive_name(p).c_str());
+                    icon_line(passive_icon(p), passive_name(p), s);
                     if (const TextKeys* k = keys_passive(p)) {
                         ImGui::Indent(ImGui::GetFontSize());
                         wrapped_dim(tr(k->desc));
@@ -340,14 +387,18 @@ void unit_tooltip(const UnitInfo& u, float s) {
             }
             if (u.mutations[0][0] || u.mutations[1][0]) {
                 section(w.mutations, seed + ++sec, s);
-                for (auto& m : u.mutations) if (m[0]) ImGui::BulletText("%s", passive_name(m).c_str());
+                for (auto& m : u.mutations) if (m[0]) icon_line(passive_icon(m), passive_name(m), s);
             }
         }
-        if (u.n_abilities > 0) {
+        int named = 0;
+        for (int i = 0; i < u.n_abilities; ++i) named += !ability_name(u.abilities[i], u).empty();
+        if (named > 0) {
             section(w.abilities, seed + ++sec, s);
             for (int i = 0; i < u.n_abilities; ++i) {
                 const AbilityInfo& a = u.abilities[i];
-                ImGui::BulletText("%s", ability_name(a, u).c_str());
+                std::string an = ability_name(a, u);
+                if (an.empty()) continue;
+                icon_line(ability_icon(a, u), an, s);
                 if (a.mana_cost > 0) {
                     ImGui::SameLine();
                     icon_inline(Swf::Ui, "ManaIcon", 0, ImGui::GetFontSize());
@@ -491,6 +542,8 @@ void save(const PanelState& st) {
     WritePrivateProfileStringA("panel", "y", v, st.ini_path.c_str());
     sprintf_s(v, "%.2f", st.opacity);
     WritePrivateProfileStringA("panel", "opacity", v, st.ini_path.c_str());
+    sprintf_s(v, "%.4f", st.list_h);
+    WritePrivateProfileStringA("panel", "height", v, st.ini_path.c_str());
     WritePrivateProfileStringA("panel", "collapsed", st.collapsed ? "1" : "0", st.ini_path.c_str());
 }
 
@@ -518,6 +571,8 @@ void panel_load(PanelState& st, const std::string& game_dir) {
     st.fy = (float)atof(v);
     GetPrivateProfileStringA("panel", "opacity", "1.0", v, sizeof(v), st.ini_path.c_str());
     st.opacity = std::fmax(0.3f, std::fmin(1.0f, (float)atof(v)));
+    GetPrivateProfileStringA("panel", "height", "0", v, sizeof(v), st.ini_path.c_str());
+    st.list_h = std::fmax(0.0f, std::fmin(0.95f, (float)atof(v)));
     st.collapsed = GetPrivateProfileIntA("panel", "collapsed", 0, st.ini_path.c_str()) != 0;
     st.slide = st.collapsed ? 0.0f : 1.0f;
     st.loaded = true;
@@ -617,17 +672,25 @@ const void* panel_draw(const Roster& r, PanelState& st, float dt, float s) {
             ink_rule(dl, hp.x, hp.x + inner, hp.y + hh + 1 * s, s, 7, IM_COL32(96, 80, 66, 170));
             ImGui::Dummy(ImVec2(0, 5 * s));
 
-            // The unit list scrolls once it reaches the cap.
-            float list_cap = std::fmin(disp.y * kMaxHeight, disp.y - ry - 40 * s) - (ImGui::GetCursorScreenPos().y - ry);
-            ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::fmax(80 * s, list_cap)));
+            // The unit list: either the height the player dragged it to, or fit
+            // to content up to a cap. Past that it scrolls (mouse wheel).
+            float room = disp.y - ry - 40 * s - (ImGui::GetCursorScreenPos().y - ry);
+            float list_cap = std::fmin(disp.y * kMaxHeight - (ImGui::GetCursorScreenPos().y - ry), room);
+            float min_h = 90 * s;
+            ImGuiChildFlags cf = ImGuiChildFlags_AlwaysUseWindowPadding;
+            ImVec2 child_size(0, 0);
+            if (st.list_h > 0) child_size.y = std::fmax(min_h, std::fmin(st.list_h * disp.y, room));
+            else {
+                cf |= ImGuiChildFlags_AutoResizeY;
+                ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, std::fmax(min_h, list_cap)));
+            }
             ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, 0);
             ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, IM_COL32(96, 80, 66, 150));
             ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(96, 80, 66, 210));
             ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, kInk);
             ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8 * s);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * s, 4 * s));
-            if (ImGui::BeginChild("units", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                                  ImGuiWindowFlags_NoBackground)) {
+            if (ImGui::BeginChild("units", child_size, cf, ImGuiWindowFlags_NoBackground)) {
                 float in2 = ImGui::GetContentRegionAvail().x;
                 if (r.n == 0) ImGui::TextDisabled("-");
                 for (int i = 0; i < r.n; ++i) {
@@ -641,8 +704,27 @@ const void* panel_draw(const Roster& r, PanelState& st, float dt, float s) {
                 }
             }
             ImGui::EndChild();
+            float child_h = ImGui::GetItemRectSize().y;
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(4);
+
+            // Bottom edge: drag to resize the list.
+            ImVec2 gp = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("resize", ImVec2(inner, 12 * s));
+            bool grip_hover = ImGui::IsItemHovered();
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0, 1.0f)) {
+                if (!st.resizing) { st.resizing = true; if (st.list_h <= 0) st.list_h = child_h / disp.y; }
+                st.list_h = std::fmax(min_h, std::fmin(st.list_h * disp.y + io.MouseDelta.y, room)) / disp.y;
+            } else if (st.resizing && !ImGui::IsItemActive()) {
+                st.resizing = false;
+                save(st);
+            }
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) { st.list_h = 0; save(st); }   // back to auto
+            ImU32 gc = grip_hover || st.resizing ? kInk : IM_COL32(96, 80, 66, 160);
+            for (int i = 0; i < 2; ++i)
+                ink_rule(dl, gp.x + inner * 0.5f - 18 * s + i * 4 * s, gp.x + inner * 0.5f + 18 * s - i * 4 * s,
+                         gp.y + 4 * s + i * 4 * s, s, 50 + i, gc);
+            if (grip_hover && !st.resizing) small_tooltip(w.resize, {}, s);
 
             dl->ChannelsSetCurrent(0);
             paper(dl, panel_win->Pos, ImVec2(panel_win->Pos.x + panel_win->Size.x, panel_win->Pos.y + panel_win->Size.y),

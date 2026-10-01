@@ -16,7 +16,7 @@ void assets_start(const std::string& game_dir);   // once; spawns the worker
 bool assets_ready();                                // data maps + SWFs loaded
 
 // --- images ----------------------------------------------------------------
-enum class Swf { Ui, Portraits };
+enum class Swf { Ui, Portraits, CatParts, AbilityIcons };
 
 struct Tex {
     uint64_t id = 0;   // GL texture name as an ImTextureID; 0 = not ready yet
@@ -25,6 +25,8 @@ struct Tex {
 // Rasterised at `px` (longer side). Queues the render on first use.
 Tex asset_image(Swf swf, const std::string& symbol, int frame, int px);
 bool asset_has(Swf swf, const std::string& symbol);
+// 0-based frame of `symbol` labelled `label` (AbilityIcon/PassiveIcon use ids), or -1.
+int asset_frame_of_label(Swf swf, const std::string& symbol, const std::string& label);
 // A raw bitmap from ui.swf by character id (e.g. the paper texture).
 Tex asset_bitmap(int id);
 // A PNG from the archive, e.g. "textures/cursor/default.png".
@@ -39,6 +41,8 @@ void assets_gl_lost();          // the GL context was recreated
 struct TextKeys {
     std::string name, desc, desc_stacks;
     std::string ability;   // items: the ability the item grants
+    std::string base;      // abilities: variant_of
+    int frame = 0;         // items: icon frame (1-based, GON `frame`)
 };
 const TextKeys* keys_item(const std::string& id);
 const TextKeys* keys_ability(const std::string& id);

@@ -41,7 +41,7 @@ struct State {
     std::atomic<bool> ready{false};
     std::thread worker;
     GPak gpak;
-    SwfDoc ui, portraits;
+    SwfDoc ui, portraits, catparts, ability_icons;
 
     std::unordered_map<std::string, TextKeys> items, abilities, passives, classes, keywords;
     std::unordered_map<std::string, std::string> portrait_by_name;
@@ -56,6 +56,15 @@ struct State {
     // status icons, from the game's own unordered_map<string, StatusIconInfo>
     std::unordered_map<std::string, std::pair<int, int>> icons;
 } g;
+
+const SwfDoc& doc_of(Swf s) {
+    switch (s) {
+    case Swf::Portraits: return g.portraits;
+    case Swf::CatParts: return g.catparts;
+    case Swf::AbilityIcons: return g.ability_icons;
+    default: return g.ui;
+    }
+}
 
 std::string img_key(Swf s, const std::string& sym, int frame, int px) {
     return std::to_string((int)s) + "|" + sym + "|" + std::to_string(frame) + "|" + std::to_string(px);
@@ -74,7 +83,7 @@ void load_gon_dir(const char* prefix, void (*fn)(const Gon& entry)) {
 
 void build_maps() {
     load_gon_dir("data/items/", [](const Gon& e) {
-        TextKeys k{e.str("name"), e.str("desc"), {}, e.str("ability")};
+        TextKeys k{e.str("name"), e.str("desc"), {}, e.str("ability"), {}, atoi(e.str("frame", "0").c_str())};
         if (!k.name.empty()) g.items[e.key] = k;
     });
     load_gon_dir("data/passives/", [](const Gon& e) {
@@ -86,6 +95,7 @@ void build_maps() {
         if (const Gon* meta = e.get("meta")) { k.name = meta->str("name"); k.desc = meta->str("desc"); }
         // variant_of: inherit what the variant does not override
         std::string base = e.str("variant_of");
+        k.base = base;
         if (!base.empty()) {
             auto it = g.abilities.find(base);
             if (it != g.abilities.end()) {
@@ -156,6 +166,11 @@ void worker_body(const std::string& game_dir) {
     std::vector<uint8_t> buf;
     bool ui_ok = g.gpak.read("swfs/ui.swf", buf) && g.ui.load(std::move(buf));
     bool pt_ok = g.gpak.read("swfs/portraits.swf", buf) && g.portraits.load(std::move(buf));
+    bool cp_ok = g.gpak.read("swfs/catparts.swf", buf) && g.catparts.load(std::move(buf));
+    bool ai_ok = g.gpak.read("swfs/ability_icons.swf", buf) && g.ability_icons.load(std::move(buf));
+    // Named instances the game shows/hides from code (slot hints, text labels).
+    for (SwfDoc* d : {&g.ui, &g.portraits, &g.catparts, &g.ability_icons}) d->hide_instances({"sloticon", "label"});
+    log_line("assets: catparts.swf %s, ability_icons.swf %s", cp_ok ? "ok" : "FAILED", ai_ok ? "ok" : "FAILED");
     build_maps();
     {
         SwfDoc intl;   // 86 MB; keep only the two fonts we use
@@ -188,8 +203,7 @@ void worker_body(const std::string& game_dir) {
         bool ok = false;
         try {
             if (job.kind == 0) {
-                const SwfDoc& doc = job.swf == Swf::Ui ? g.ui : g.portraits;
-                ok = doc.render(job.symbol, job.frame, job.px, im);
+                ok = doc_of(job.swf).render(job.symbol, job.frame, job.px, im);
             } else if (job.kind == 1) {
                 ok = g.ui.bitmap((uint16_t)job.frame, im);
             } else {
@@ -225,7 +239,12 @@ bool assets_ready() { return g.ready; }
 
 bool asset_has(Swf swf, const std::string& symbol) {
     if (!g.ready) return false;
-    return (swf == Swf::Ui ? g.ui : g.portraits).has(symbol);
+    return doc_of(swf).has(symbol);
+}
+
+int asset_frame_of_label(Swf swf, const std::string& symbol, const std::string& label) {
+    if (!g.ready) return -1;
+    return doc_of(swf).frame_of_label(symbol, label);
 }
 
 namespace {

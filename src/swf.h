@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -52,6 +53,11 @@ public:
     bool has(const std::string& symbol) const { return symbols_.count(symbol) != 0; }
     int  frame_count(const std::string& symbol) const;
 
+    // 0-based frame carrying `label` in `symbol`'s timeline, or -1.
+    int frame_of_label(const std::string& symbol, const std::string& label) const;
+    // Instances with these names are never drawn (the game toggles them in code).
+    void hide_instances(std::vector<std::string> names) { hidden_ = std::move(names); }
+
     // Renders `symbol` at `frame`, scaled so its longer side is `size` px.
     bool render(const std::string& symbol, int frame, int size, SwfImage& out) const;
 
@@ -60,6 +66,9 @@ private:
     std::vector<uint8_t> body_;
     std::unordered_map<std::string, uint16_t> symbols_;
     std::shared_ptr<Impl> impl_;
+    std::vector<std::string> hidden_;
+    mutable std::unordered_map<std::string, std::unordered_map<std::string, int>> labels_;
+    mutable std::mutex labels_mu_;
 };
 
 }  // namespace cr

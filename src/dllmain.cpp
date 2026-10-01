@@ -36,7 +36,7 @@ void init() {
     GetModuleFileNameA(nullptr, exe, MAX_PATH);
     if (char* slash = strrchr(exe, '\\')) *slash = 0;
     cr::log_open(exe);
-    cr::log_line("Combat Roster Panel v0.3 -- base %p", (void*)cr::g_base);
+    cr::log_line("Combat Roster Panel v0.4 -- base %p", (void*)cr::g_base);
 
     auto dos = (const IMAGE_DOS_HEADER*)cr::g_base;
     auto nt  = (const IMAGE_NT_HEADERS64*)(cr::g_base + dos->e_lfanew);

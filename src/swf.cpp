@@ -337,7 +337,8 @@ struct SwfDoc::Impl {
     mutable std::unordered_map<uint16_t, std::shared_ptr<Shape>> shapes;
     mutable std::unordered_map<uint16_t, std::shared_ptr<Bitmap>> bitmaps;
 
-    struct Place { uint16_t cid = 0; Mat m; CX cx; uint16_t clip = 0; };
+    struct Place { uint16_t cid = 0; Mat m; CX cx; uint16_t clip = 0; std::string name; };
+    const std::vector<std::string>* hidden = nullptr;
 
     void scan(size_t pos, size_t end);
     std::shared_ptr<Shape> shape(uint16_t id) const;
@@ -449,7 +450,13 @@ std::map<uint16_t, SwfDoc::Impl::Place> SwfDoc::Impl::display_list(uint16_t id, 
             if (flags & 0x04) pl.m = read_matrix(bs);
             if (flags & 0x08) pl.cx = read_cxform(bs, true);
             if (flags & 0x10) bs.u16();
-            if (flags & 0x20) bs.cstr();
+            if (flags & 0x20) {
+                bs.align();
+                size_t e = bs.p;
+                while (e < bs.n && b[e]) ++e;
+                pl.name.assign((const char*)&b[bs.p], e - bs.p);
+                bs.p = e + 1;
+            }
             if (flags & 0x40) pl.clip = bs.u16();
             dl[depth] = pl;
         } else if (code == 28 && len >= 2) {
@@ -491,8 +498,13 @@ void SwfDoc::Impl::bounds(uint16_t id, const Mat& m, int frame, int depth, doubl
                 x0 = std::min(x0, ox); y0 = std::min(y0, oy); x1 = std::max(x1, ox); y1 = std::max(y1, oy);
             }
     } else if (c->second.kind == 2) {
-        for (auto& [d, pl] : display_list(id, frame))
-            if (pl.cid && !pl.clip) bounds(pl.cid, m * pl.m, 0, depth + 1, x0, y0, x1, y1);
+        for (auto& [d, pl] : display_list(id, frame)) {
+            if (!pl.cid || pl.clip) continue;
+            if (hidden && !pl.name.empty() &&
+                std::find(hidden->begin(), hidden->end(), pl.name) != hidden->end())
+                continue;
+            bounds(pl.cid, m * pl.m, 0, depth + 1, x0, y0, x1, y1);
+        }
     }
 }
 
@@ -596,8 +608,13 @@ void SwfDoc::Impl::draw(Canvas& cv, uint16_t id, const Mat& m, const CX& cx, int
     if (c->second.kind == 1) {
         if (auto s = shape(id)) draw_shape(cv, *s, m, cx);
     } else if (c->second.kind == 2) {
-        for (auto& [d, pl] : display_list(id, frame))
-            if (pl.cid && !pl.clip) draw(cv, pl.cid, m * pl.m, cx * pl.cx, 0, depth + 1);
+        for (auto& [d, pl] : display_list(id, frame)) {
+            if (!pl.cid || pl.clip) continue;
+            if (hidden && !pl.name.empty() &&
+                std::find(hidden->begin(), hidden->end(), pl.name) != hidden->end())
+                continue;
+            draw(cv, pl.cid, m * pl.m, cx * pl.cx, 0, depth + 1);
+        }
     }
 }
 
@@ -739,6 +756,7 @@ bool SwfDoc::load(std::vector<uint8_t>&& file) {
     body_.erase(body_.begin(), body_.begin() + 8);
     impl_ = std::make_shared<Impl>();
     impl_->body = &body_;
+    impl_->hidden = &hidden_;
     int nbits = body_[0] >> 3;
     size_t pos = (5 + 4 * nbits + 7) / 8 + 4;
     impl_->scan(pos, body_.size());
@@ -758,6 +776,30 @@ bool SwfDoc::load(std::vector<uint8_t>&& file) {
         return true;
     });
     return !symbols_.empty();
+}
+
+int SwfDoc::frame_of_label(const std::string& symbol, const std::string& label) const {
+    auto it = symbols_.find(symbol);
+    if (it == symbols_.end()) return -1;
+    std::lock_guard<std::mutex> lk(labels_mu_);
+    auto& m = labels_[symbol];
+    if (m.empty()) {
+        auto c = impl_->chars.find(it->second);
+        if (c == impl_->chars.end() || c->second.kind != 2) return -1;
+        int f = 0;
+        for_tags(body_, c->second.p, c->second.p + c->second.len, [&](int code, size_t p, size_t len) {
+            if (code == 1) ++f;
+            else if (code == 43) {
+                size_t e = p;
+                while (e < p + len && body_[e]) ++e;
+                m.emplace(std::string((const char*)&body_[p], e - p), f);
+            }
+            return true;
+        });
+        if (m.empty()) m.emplace("", -1);
+    }
+    auto l = m.find(label);
+    return l == m.end() ? -1 : l->second;
 }
 
 int SwfDoc::frame_count(const std::string& symbol) const {

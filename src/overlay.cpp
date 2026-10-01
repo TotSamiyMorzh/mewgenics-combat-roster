@@ -97,6 +97,11 @@ LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
         if (g.capture_mouse) {
             switch (msg) {
+            case WM_SETCURSOR:
+                // SDL thinks the pointer left the window and would show the
+                // system arrow on top of the game cursor we draw: hide it.
+                if (LOWORD(lp) == HTCLIENT) { SetCursor(nullptr); return TRUE; }
+                break;
             case WM_MOUSEMOVE:
                 // The game must not see the pointer over the board under our
                 // panel: hand SDL a position far outside the window instead.
