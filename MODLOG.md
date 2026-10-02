@@ -113,3 +113,6 @@ Native DLL mod loaded by **Mewjector** (version.dll proxy, MIT, community standa
   descriptors @+0x2C stride 0x54, part idx +4. Run cats: MewDirector+1432 registry, unordered_map at +0xE8
   (list head +0xF0, node key +0x10, CatData* +0x18). Items on the face: hats need an extra offset not yet found,
   so portraits are drawn without them.
+- 2026-10-02: released 0.5.0 — GitHub https://github.com/TotSamiyMorzh/mewgenics-combat-roster (release v0.5.0,
+  zip SHA256 6c2ae681...de14). Field note PR: https://github.com/rehan-remade/universal-modder/pull/3.
+  Nexus page text prepared in dist/NEXUS_PAGE.txt (upload is done by the human).
