@@ -3,6 +3,9 @@
 A side panel for battles in **Mewgenics** that lists every unit on your side — cats, familiars, summons and
 allied bosses — in the game's own look. *(Русская версия ниже.)*
 
+**Download:** [Nexus Mods](https://www.nexusmods.com/mewgenics/mods/539) ·
+[GitHub Releases](https://github.com/TotSamiyMorzh/mewgenics-combat-roster/releases/latest)
+
 - **Portraits:** each cat's real face, composed from the game's cat parts in its class colours. Other units
   use their own game portraits.
 - **Bars and icons:** HP, shield and mana bars, plus the game's status icons with stack counts.
@@ -80,5 +83,8 @@ MIT for the code in this repository (see `LICENSE`). Third-party code keeps its 
 `chainloader.ini` рядом с `Mewgenics.exe`), затем положи `combat_roster.dll` в папку `mods\` игры.
 **Удаление:** удали `mods\combat_roster.dll`. Лог: `mod_logs\combat_roster.log`.
 Нужна версия игры 1.1.21239 (Steam build 25143593). На другой версии мод сам выключится.
+
+**Скачать:** [Nexus Mods](https://www.nexusmods.com/mewgenics/mods/539) ·
+[GitHub Releases](https://github.com/TotSamiyMorzh/mewgenics-combat-roster/releases/latest)
 
 Мод сделан Claude Code (Claude Opus 5.5) с помощью universal-modder, протестирован человеком в игре.

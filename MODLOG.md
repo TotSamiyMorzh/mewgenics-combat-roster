@@ -116,3 +116,4 @@ Native DLL mod loaded by **Mewjector** (version.dll proxy, MIT, community standa
 - 2026-10-02: released 0.5.0 — GitHub https://github.com/TotSamiyMorzh/mewgenics-combat-roster (release v0.5.0,
   zip SHA256 6c2ae681...de14). Field note PR: https://github.com/rehan-remade/universal-modder/pull/3.
   Nexus page text prepared in dist/NEXUS_PAGE.txt (upload is done by the human).
+- 2026-10-05: 0.5.1 (CJK fix) released; Nexus page https://www.nexusmods.com/mewgenics/mods/539. KB follow-up PR: https://github.com/rehan-remade/universal-modder/pull/61 (PR 3 merged 2026-10-04).
