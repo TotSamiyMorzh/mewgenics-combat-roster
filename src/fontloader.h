@@ -14,6 +14,8 @@ struct SwfFont;
 
 // Adds `font` as a new ImGui font (plus a merged system fallback). The
 // SwfFont must outlive the atlas. Returns null on failure.
-ImFont* add_swf_font(std::shared_ptr<SwfFont> font, float size_px);
+// `fallback` (the game's Noto Sans CJK from swfs/unicodefont.swf) is merged
+// behind it so Chinese / Japanese / Korean text renders instead of '?'.
+ImFont* add_swf_font(std::shared_ptr<SwfFont> font, float size_px, std::shared_ptr<SwfFont> fallback = nullptr);
 
 }  // namespace cr

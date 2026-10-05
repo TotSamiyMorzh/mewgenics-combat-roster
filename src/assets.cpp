@@ -51,7 +51,7 @@ struct State {
     std::unordered_map<std::string, std::pair<float, float>> hotspots;
     std::unordered_map<std::string, int> class_palettes;
     std::vector<uint8_t> palette;   // textures/palette.png, 256 rows x 16 RGB
-    std::shared_ptr<SwfFont> body_font, title_font;
+    std::shared_ptr<SwfFont> body_font, title_font, cjk_font;
 
     std::mutex mu;
     std::condition_variable cv;
@@ -198,7 +198,13 @@ void worker_body(const std::string& game_dir) {
             g.body_font = intl.font("TikaFontIntl");
             g.title_font = intl.font("Mewgenics Organ Grinder Cyr");
         }
-        log_line("assets: fonts body=%s title=%s", g.body_font ? "ok" : "MISSING", g.title_font ? "ok" : "MISSING");
+        SwfDoc uni;   // Noto Sans CJK: what the game itself falls back to for Chinese/Japanese/Korean
+        if (g.gpak.read("swfs/unicodefont.swf", buf)) {
+            uni.load(std::move(buf));   // no exported symbols in this file; only its font is wanted
+            g.cjk_font = uni.font("Noto Sans CJK");
+        }
+        log_line("assets: fonts body=%s title=%s cjk=%s (%zu glyphs)", g.body_font ? "ok" : "MISSING",
+                 g.title_font ? "ok" : "MISSING", g.cjk_font ? "ok" : "MISSING", g.cjk_font ? g.cjk_font->glyphs.size() : 0);
     }
     log_line("assets: ui.swf %s, portraits.swf %s; %zu items, %zu abilities, %zu passives, %zu classes, "
              "%zu keywords, %zu portraits",
@@ -314,6 +320,7 @@ void cursor_hotspot(const std::string& state, float& x, float& y) {
 
 std::shared_ptr<SwfFont> font_body() { return g.ready ? g.body_font : nullptr; }
 std::shared_ptr<SwfFont> font_title() { return g.ready ? g.title_font : nullptr; }
+std::shared_ptr<SwfFont> font_cjk() { return g.ready ? g.cjk_font : nullptr; }
 
 namespace {
 Tex request(int kind, Swf swf, const std::string& symbol, int frame, int px) {

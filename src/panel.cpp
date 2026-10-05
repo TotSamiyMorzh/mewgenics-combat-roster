@@ -56,9 +56,16 @@ const Words kRu = {"Отряд", "Характеристики", "Снаряже
 const Words kEn = {"Party", "Stats", "Equipment", "Abilities", "Passives", "Mutations", "Effects", "charge",
                    "per fight", "off the board", "Hide party", "Show party", "Drag to move", "Opacity", "Lv",
                    "Drag to resize (double-click: auto)"};
+const Words kZh = {"队伍", "属性", "装备", "技能", "被动", "变异", "效果", "充能", "每场战斗", "不在场上", "隐藏队伍", "显示队伍",
+                   "拖动以移动", "不透明度", "等级", "拖动调整高度（双击恢复自动）"};
+const Words kJa = {"パーティ", "ステータス", "装備", "アビリティ", "パッシブ", "変異", "効果", "チャージ", "戦闘ごと", "盤外",
+                   "パーティを隠す", "パーティを表示", "ドラッグで移動", "不透明度", "Lv", "ドラッグで高さ変更（ダブルクリックで自動）"};
+const Words kKo = {"파티", "능력치", "장비", "능력", "패시브", "돌연변이", "효과", "충전", "전투당", "전장 밖", "파티 숨기기",
+                   "파티 표시", "드래그하여 이동", "불투명도", "Lv", "드래그하여 높이 조절 (더블클릭: 자동)"};
 const Words& W() {
     static std::string lang = loc_lang();
-    return lang.rfind("ru", 0) == 0 ? kRu : kEn;
+    auto is = [&](const char* p) { return lang.rfind(p, 0) == 0; };
+    return is("ru") ? kRu : is("zh") ? kZh : is("ja") ? kJa : is("ko") ? kKo : kEn;
 }
 
 const char* kStatIcons[7] = {"FontIcon_str", "FontIcon_dex", "FontIcon_con", "FontIcon_int",

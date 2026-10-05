@@ -62,6 +62,7 @@ struct SwfFont;
 // The game's fonts (from swfs/international_fonts.swf, Latin + Cyrillic).
 std::shared_ptr<SwfFont> font_body();    // TikaFontIntl
 std::shared_ptr<SwfFont> font_title();   // Mewgenics Organ Grinder Cyr
+std::shared_ptr<SwfFont> font_cjk();     // Noto Sans CJK (swfs/unicodefont.swf), the game's own fallback
 
 // --- status icons ----------------------------------------------------------
 // StatusIcon frame (0-based) for a status class name and stack sign, or -1 if

@@ -24,13 +24,23 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.DisplaySize = ImVec2(800, 600);
-    ImFont* f1 = cr::add_swf_font(body, 18.0f);
-    ImFont* f2 = cr::add_swf_font(title, 18.0f);
+    std::vector<uint8_t> ub;
+    cr::SwfDoc uni;
+    std::shared_ptr<cr::SwfFont> cjk;
+    if (g.read("swfs/unicodefont.swf", ub)) { uni.load(std::move(ub)); cjk = uni.font("Noto Sans CJK"); }
+    printf("cjk %s glyphs=%zu asc=%.0f desc=%.0f\n", cjk ? cjk->name.c_str() : "-", cjk ? cjk->glyphs.size() : 0,
+           cjk ? cjk->ascent : 0, cjk ? cjk->descent : 0);
+    ImFont* f1 = cr::add_swf_font(body, 18.0f, cjk);
+    ImFont* f2 = cr::add_swf_font(title, 18.0f, cjk);
     printf("fonts %p %p\n", (void*)f1, (void*)f2);
     io.FontDefault = f1;
     ImGui::NewFrame();
     ImGui::PushFont(f1, 36.0f);
     ImVec2 sz = ImGui::CalcTextSize("Элайда Мясник 40/40 Кровотечение");
+    ImVec2 szc = ImGui::CalcTextSize("队伍 流血 パーティ 파티");
+    for (ImWchar c : {(ImWchar)0x961F, (ImWchar)0x30D1, (ImWchar)0xD30C, (ImWchar)0x4E00})
+        printf("glyph U+%04X %s\n", c, ImGui::GetFontBaked()->FindGlyphNoFallback(c) ? "found" : "MISSING");
+    printf("cjk text size %.0fx%.0f\n", szc.x, szc.y);
     ImGui::PopFont();
     ImGui::PushFont(f2, 36.0f);
     ImVec2 sz2 = ImGui::CalcTextSize("Отряд Характеристики");

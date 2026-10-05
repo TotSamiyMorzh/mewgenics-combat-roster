@@ -248,8 +248,8 @@ void render_frame() {
     if (!g.fonts_added && assets_ready()) {
         // The game's own fonts, added between frames (ImGui 1.92 fonts are dynamic).
         g.fonts_added = true;
-        if (ImFont* body = add_swf_font(font_body(), 18.0f)) ImGui::GetIO().FontDefault = body;
-        g.panel.title_font = add_swf_font(font_title(), 18.0f);
+        if (ImFont* body = add_swf_font(font_body(), 18.0f, font_cjk())) ImGui::GetIO().FontDefault = body;
+        g.panel.title_font = add_swf_font(font_title(), 18.0f, font_cjk());
         log_line("overlay: game fonts %s", ImGui::GetIO().FontDefault ? "in use" : "unavailable, using Segoe UI");
     }
     assets_upload_pending();

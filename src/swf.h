@@ -30,10 +30,13 @@ struct SwfFont {
         std::vector<float> segs;   // x0 y0 x1 y1 per edge, oriented for nonzero fill
         float advance = 0;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0;   // bounds
+        uint32_t src_off = 0, src_end = 0;      // outline bytes inside SwfFont::data
+        bool parsed = false;                    // outlines are parsed on first use
     };
     std::string name;
     std::unordered_map<uint32_t, int> index;   // codepoint -> glyph
-    std::vector<Glyph> glyphs;
+    mutable std::vector<Glyph> glyphs;         // advances are ready; outlines parse lazily
+    std::vector<uint8_t> data;                 // the DefineFont tag (a CJK font has 40k+ glyphs)
     float ascent = 0, descent = 0, leading = 0;
     static constexpr float kEm = 20480.0f;
 

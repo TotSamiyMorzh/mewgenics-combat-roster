@@ -9,6 +9,7 @@ int main(int argc, char** argv) {
     cr::SwfDoc d; d.load(std::move(buf));
     auto f = d.font("TikaFontIntl");
     int gi = f->index[0x42D];
+    { int w0, h0; float a0, b0; std::vector<uint8_t> t; f->raster(gi, 0.001f, w0, h0, a0, b0, t); }   // parse lazily
     auto& gl = f->glyphs[gi];
     printf("glyph %d segs=%zu bounds %.0f %.0f %.0f %.0f adv %.0f\n", gi, gl.segs.size() / 4, gl.x0, gl.y0, gl.x1, gl.y1, gl.advance);
     for (size_t i = 0; i < gl.segs.size() && i < 40; i += 4) printf("  %.0f,%.0f -> %.0f,%.0f\n", gl.segs[i], gl.segs[i+1], gl.segs[i+2], gl.segs[i+3]);

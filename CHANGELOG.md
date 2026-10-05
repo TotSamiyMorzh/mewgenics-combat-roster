@@ -2,6 +2,11 @@
 
 Supported game build: Mewgenics 1.1.21239 (Steam build 25143593).
 
+## 0.5.1 — 2026-10-05
+- Fixed Chinese / Japanese / Korean text showing as `?`: the game's own CJK font (Noto Sans CJK from
+  `unicodefont.swf`) is now used for every character the main game font lacks, with system fonts behind it.
+- The mod's own labels are translated to Chinese, Japanese and Korean.
+
 ## 0.5.0 — 2026-10-02
 - Real cat faces in their class colours, composed from the game's cat parts.
 - SWF renderer: mask layers, part substitution, palette recolouring.

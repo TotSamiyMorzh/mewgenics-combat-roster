@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 namespace cr {
@@ -101,7 +102,7 @@ const ImFontLoader* loader() {
 
 }  // namespace
 
-ImFont* add_swf_font(std::shared_ptr<SwfFont> font, float size_px) {
+ImFont* add_swf_font(std::shared_ptr<SwfFont> font, float size_px, std::shared_ptr<SwfFont> fallback) {
     if (!font || font->index.empty()) return nullptr;
     g_keep.push_back(font);
     ImGuiIO& io = ImGui::GetIO();
@@ -112,11 +113,25 @@ ImFont* add_swf_font(std::shared_ptr<SwfFont> font, float size_px) {
     ImFont* out = io.Fonts->AddFont(&cfg);
     if (!out) return nullptr;
 
-    // Fallback for scripts the game font does not cover (CJK, symbols).
-    char path[MAX_PATH];
-    GetWindowsDirectoryA(path, MAX_PATH);
-    strcat_s(path, "\\Fonts\\segoeuib.ttf");
-    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
+    // Glyphs the game font lacks fall through the merged sources in order:
+    // the game's own CJK font, then system fonts (Latin/symbols, then CJK).
+    if (fallback && !fallback->index.empty()) {
+        bool known = false;
+        for (auto& k : g_keep) known |= k == fallback;
+        if (!known) g_keep.push_back(fallback);
+        ImFontConfig merge;
+        merge.MergeMode = true;
+        merge.FontLoader = loader();
+        merge.SizePixels = size_px;
+        ImFormatString(merge.Name, IM_ARRAYSIZE(merge.Name), "%s", fallback->name.c_str());
+        io.Fonts->AddFont(&merge);
+    }
+    char win[MAX_PATH];
+    GetWindowsDirectoryA(win, MAX_PATH);
+    for (const char* file : {"segoeuib.ttf", "msyh.ttc", "malgun.ttf", "YuGothM.ttc", "msgothic.ttc"}) {
+        char path[MAX_PATH];
+        sprintf_s(path, "%s\\Fonts\\%s", win, file);
+        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) continue;
         ImFontConfig merge;
         merge.MergeMode = true;
         io.Fonts->AddFontFromFileTTF(path, size_px, &merge);

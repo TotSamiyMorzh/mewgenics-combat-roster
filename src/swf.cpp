@@ -735,7 +735,11 @@ void parse_glyph(const uint8_t* b, size_t start, size_t end, SwfFont::Glyph& g) 
 
 bool SwfFont::raster(int glyph, float scale, int& w, int& h, float& ox, float& oy, std::vector<uint8_t>& alpha) const {
     if (glyph < 0 || glyph >= (int)glyphs.size()) return false;
-    const Glyph& g = glyphs[glyph];
+    Glyph& g = glyphs[glyph];
+    if (!g.parsed) {
+        g.parsed = true;
+        if (g.src_end > g.src_off && g.src_end <= data.size()) parse_glyph(data.data(), g.src_off, g.src_end, g);
+    }
     if (g.segs.empty()) { w = h = 0; return true; }
     int px0 = (int)std::floor(g.x0 * scale) - 1, py0 = (int)std::floor(g.y0 * scale) - 1;
     int px1 = (int)std::ceil(g.x1 * scale) + 1, py1 = (int)std::ceil(g.y1 * scale) + 1;
@@ -782,9 +786,11 @@ std::shared_ptr<SwfFont> SwfDoc::font(const std::string& prefix) const {
         auto f = std::make_shared<SwfFont>();
         f->name = name;
         f->glyphs.resize(ng);
+        f->data.assign(b + p, b + end);   // keep the tag; glyph outlines are parsed on demand
         size_t codes = q + off_at(ng);
         for (int i = 0; i < ng; ++i) {
-            parse_glyph(b, q + off_at(i), q + (i + 1 < ng ? off_at(i + 1) : off_at(ng)), f->glyphs[i]);
+            f->glyphs[i].src_off = (uint32_t)(q + off_at(i) - p);
+            f->glyphs[i].src_end = (uint32_t)(q + (i + 1 < ng ? off_at(i + 1) : off_at(ng)) - p);
             uint32_t cp = wide_codes ? rd16(body_, codes + 2 * i) : b[codes + i];
             f->index[cp] = i;
         }
